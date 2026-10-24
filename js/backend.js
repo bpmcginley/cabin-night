@@ -40,19 +40,19 @@ window.CNBackend = (function(){
       doc: p => { const s = p.split('/'); return wrapDoc(root.collection(s[0]).doc(s.slice(1).join('/'))); },
       collection: p => { const s = p.split('/'); let r = root.collection(s[0]); for (let i = 1; i < s.length; i += 2) r = r.doc(s[i]).collection(s[i+1]); return wrapQuery(r, true); },
     };
-    let assets = null;
-    if (firebase.storage && cfg.firebase.storageBucket) {
-      const st = firebase.storage();
-      assets = {
-        upload: async (file) => {
-          const ext = (file.name.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
-          const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-          const ref = st.ref('houses/' + house + '/clips/' + id + ext);
-          await ref.put(file, {contentType: file.type || 'audio/mpeg'});
-          return {id, url: await ref.getDownloadURL()};
-        }
-      };
-    }
+    // Song clips live in Firestore itself (free Spark plan, no Firebase Storage needed).
+    // One clip per document, so each clip must stay under ~700 KB (Firestore's limit is 1 MiB per document).
+    const MAX_CLIP = 720000;
+    const assets = {
+      maxBytes: MAX_CLIP,
+      upload: async (file) => {
+        if (file.size > MAX_CLIP) throw {code: 'too_big'};
+        const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        await db.doc('clips/' + id).set({data, type: file.type || 'audio/mpeg', size: file.size, at: Date.now()});
+        return {id, url: 'clip:' + id};
+      }
+    };
     return {db, uid: auth.currentUser.uid, assets, worker: makeWorker(house)};
   }
 

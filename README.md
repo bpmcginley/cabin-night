@@ -4,7 +4,7 @@ A cozy two-player game night for Bruce and Meredith. It has a 3D territory map o
 
 **Hosting:** the game is a static site on GitHub Pages.
 **Backend:**
-- **Firebase** handles live sync, sign-in and song-clip uploads.
+- **Firebase** (free Spark plan) handles live sync, sign-in and song-clip uploads.
 - **A small Cloudflare Worker** fetches 30-second Deezer song previews and, optionally, Claude-written questions.
 
 Until the backend is set up, the site runs in **practice mode** on one device.
@@ -19,7 +19,7 @@ Until the backend is set up, the site runs in **practice mode** on one device.
 | `js/app.js` | Game logic |
 | `js/data.js`, `js/bank-extra.js` | Built-in questions, word puzzles, tunes and songs |
 | `worker/worker.js` | Cloudflare Worker code (not served by Pages) |
-| `firebase/*.rules` | Security rules to paste into Firebase |
+| `firebase/firestore.rules` | Security rules to paste into Firebase |
 
 ## Setup (about 20 minutes, once)
 
@@ -28,19 +28,13 @@ Choose a secret phrase you'll both type into the game, such as `snowy-cabin-2026
 
 It keeps your games private. Anyone without it can't reach your data or your Worker.
 
-### 2. Firebase (free tier)
+### 2. Firebase (free Spark plan, no card needed)
 1. Go to <https://console.firebase.google.com> → **Add project**. You can turn Analytics off.
 2. Turn on sign-in: **Build → Authentication → Get started → Sign-in method → Anonymous → Enable**.
 3. Create the database: **Build → Firestore Database → Create database**. Choose production mode and a US location.
    - On the **Rules** tab, paste `firebase/firestore.rules` and click **Publish**.
-4. Set up clip uploads:
-   - Firebase now requires the pay-as-you-go **Blaze** plan for Storage. It needs a card on file but keeps a no-cost tier.
-   - Upgrade, then **Build → Storage → Get started**. Pick `us-east1`, `us-central1` or `us-west1` for Google's "Always Free" storage.
-   - On the **Rules** tab, paste `firebase/storage.rules` and click **Publish**.
-   - To avoid surprises, set a budget alert in Google Cloud Billing (for example $1).
-   - If you'd rather not add a card, skip this step. Everything works except uploading clips.
-5. Register the site: **Project settings (gear) → Your apps → Web `</>`**. Register an app called `cabin-night` and copy the `firebaseConfig` values into `js/config.js`.
-6. Allow your site to sign in: **Authentication → Settings → Authorized domains → Add domain**: `bpmcginley.github.io`.
+4. Register the site: **Project settings (gear) → Your apps → Web `</>`**. Register an app called `cabin-night` and copy the `firebaseConfig` values into `js/config.js`.
+5. Allow your site to sign in: **Authentication → Settings → Authorized domains → Add domain**: `bpmcginley.github.io`.
 
 The Firebase web config isn't a secret, so committing it to a public repo is fine. The security rules and your house key protect the data.
 
@@ -65,7 +59,7 @@ The Firebase web config isn't a secret, so committing it to a public repo is fin
 ## Song sources
 - **Deezer previews:** 30-second clips of real songs, looked up live through the Worker. Clip length shrinks with difficulty: 15, 10, 7 and 5 seconds. Each clip is credited "Preview courtesy of Deezer". Nothing is stored, as Deezer's guidelines require.
 - **Music box:** public-domain melodies, played in the browser. Used when the Worker is off, and for about 1 in 4 Name That Tune rounds.
-- **Your clips:** upload under *Write a question → Name That Tune*. The first 20 seconds play.
+- **Your clips:** upload under *Write a question → Name That Tune*. Clips are saved in Firestore (no Firebase Storage or paid plan needed), so each must be under 700 KB, about 30 seconds of MP3. The first 20 seconds play.
 
 Check Deezer's terms of use yourself before relying on them. Their developer guidelines don't mention games.
 

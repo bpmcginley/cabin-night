@@ -557,6 +557,7 @@ function goHome(){leaveRoom();show('home');renderHome()}
 /* ---------- overlay: question / reveal / over ---------- */
 function stopTimer(){if(TIMER){clearInterval(TIMER);TIMER=null}}
 let AUD=null;function clipPlayer(url){if(!AUD)AUD=new Audio();if(AUD.dataset.src!==url){AUD.dataset.src=url;AUD.src=url;AUD.preload='auto'}return AUD}
+const CLIPCACHE={};async function resolveAudio(src){if(!src||!src.startsWith('clip:'))return src;if(CLIPCACHE[src])return CLIPCACHE[src];try{const s=await DB.doc('clips/'+src.slice(5)).get();const d=s.exists?s.data().data:null;if(d)CLIPCACHE[src]=d;return d}catch(e){return null}}
 function stopClip(){if(AUD){try{AUD.pause()}catch(e){}}clearTimeout(LOCAL.clipT)}
 function srcChip(q){return q.src==='ai'?'<span class="chip src">Fresh · by Claude</span>':q.src==='custom'?`<span class="chip src">Written by ${NAME[q.by]}</span>`:'<span class="chip src">Built-in</span>'}
 function renderOverlay(force){
@@ -600,7 +601,7 @@ function wireQuestion(R,s,role){
  const r=R.round,q=r.q;
  const hb=$('#qHand');if(hb){hb.onclick=()=>{LOCAL.handed=true;LOCAL.startT=performance.now();OVKEY=null;renderOverlay(true)};return}
  const playing=()=>{const d=$('#drum'),b=$('#bars');if(d)d.classList.add('playing');if(b)b.classList.add('on');return dur=>setTimeout(()=>{d&&d.classList.remove('playing');b&&b.classList.remove('on')},dur*1000)};
- const doPlay=()=>{if(q.audio||q.preview){const a=clipPlayer(q.audio||q.preview);if(a){clearTimeout(LOCAL.clipT);a.currentTime=0;const len=q.preview?(q.clip||10):20;a.play().catch(()=>toast('Tap Play again to hear the clip.'));const done=playing();a.onended=()=>done(0);LOCAL.clipT=setTimeout(()=>{a.pause();done(0)},len*1000);return len}return 0}const t=TUNES.find(x=>x.id===q.tune);if(!t)return 0;const d=playTune(t);playing()(d);return d};
+ const doPlay=()=>{if(q.audio||q.preview){const len=q.preview?(q.clip||10):20;clearTimeout(LOCAL.clipT);const done=playing();const key=LOCAL.key;resolveAudio(q.audio||q.preview).then(u=>{if(LOCAL.key!==key)return;if(!u){toast('That clip could not be loaded.');done(0);return}const a=clipPlayer(u);a.currentTime=0;a.play().catch(()=>toast('Tap Play again to hear the clip.'));a.onended=()=>done(0);LOCAL.clipT=setTimeout(()=>{a.pause();done(0)},len*1000)});return len}const t=TUNES.find(x=>x.id===q.tune);if(!t)return 0;const d=playTune(t);playing()(d);return d};
  if(q.kind==='tune'){$('#qReplay').onclick=()=>{if(LOCAL.played>=3)return toast('That was the last replay.');LOCAL.played++;doPlay()};}
  if(role==='watch'||LOCAL.submitted){if(q.kind==='tune'&&!LOCAL.played&&role==='watch'){LOCAL.played=1;doPlay()}if(LOCAL.submitted)watchStuck(R);return}
  // timer
@@ -702,7 +703,7 @@ async function openWrite(){
   <div class="choice-grid"><label class="stack" style="gap:6px"><span class="label">Category</span><select id="wCat">${['gk','mus','thr','sci','tune'].map(c=>`<option value="${c}">${CATS[c].name}</option>`).join('')}</select></label>
   <label class="stack" style="gap:6px"><span class="label">Difficulty you'd guess</span><select id="wTier">${[1,2,3,4].map(t=>`<option value="${t}">${TIER[t].n}</option>`).join('')}</select></label></div>
   <label class="stack" style="gap:6px"><span class="label" id="wQl">Question</span><textarea id="wQ" maxlength="220" placeholder="What was the first concert we went to together?"></textarea></label>
-  <div id="wAudioRow" class="stack" hidden><span class="label">Song clip</span><input type="file" id="wAudio" accept="audio/*"><span class="muted" style="font-size:13px">Upload a short audio clip you own, under 15 MB. The first 20 seconds play.</span></div>
+  <div id="wAudioRow" class="stack" hidden><span class="label">Song clip</span><input type="file" id="wAudio" accept="audio/*"><span class="muted" style="font-size:13px">Upload a short audio clip you own, under 700 KB (about 30 seconds of MP3). The first 20 seconds play.</span></div>
   <label class="stack" style="gap:6px"><span class="label">Answer</span><input type="text" id="wA" maxlength="80" placeholder="The answer"></label>
   <label class="stack" style="gap:6px"><span class="label">Also accept (optional, comma separated)</span><input type="text" id="wAlts" maxlength="160" placeholder="Other spellings or short forms"></label>
   <label class="stack" style="gap:6px"><span class="label">Three wrong answers (optional, comma separated)</span><input type="text" id="wWrong" maxlength="200" placeholder="Leave empty to make it type-in only"></label>
@@ -714,8 +715,9 @@ async function openWrite(){
   if(!a)return toast('Add the answer.');if(cat!=='tune'&&!q)return toast('Add the question.');
   const wrong=$('#wWrong').value.split(',').map(x=>x.trim()).filter(Boolean);if(wrong.length&&wrong.length<3)return toast('Add three wrong answers, or leave that box empty.');
   const btn=$('#wSave');btn.disabled=true;let audio=null;
-  if(cat==='tune'){const f=$('#wAudio').files[0];if(!f){btn.disabled=false;return toast('Choose a song clip to upload.')}if(!ASSETS){btn.disabled=false;return toast('Clip uploads need Firebase Storage set up (see README).')}
-   try{if(f.size>15*1024*1024)throw 0;const up=await ASSETS.upload(f);audio=up.url}catch(err){btn.disabled=false;return toast('The clip did not upload. Try a smaller audio file.')}}
+  if(cat==='tune'){const f=$('#wAudio').files[0];if(!f){btn.disabled=false;return toast('Choose a song clip to upload.')}if(!ASSETS){btn.disabled=false;return toast('Clip uploads need the Firebase setup (see README).')}
+   if(f.size>(ASSETS.maxBytes||720000)){btn.disabled=false;return toast('That file is too big. Use a clip under 700 KB (about 30 seconds of MP3).')}
+   try{const up=await ASSETS.upload(f);audio=up.url}catch(err){btn.disabled=false;return toast('The clip did not upload. Check your connection and try again.')}}
   try{await DB.collection('custom').add({author:ME,cat,tier:+$('#wTier').value,q:q||'Name that tune!',a,alts:$('#wAlts').value.split(',').map(x=>x.trim()).filter(Boolean),wrong:wrong.slice(0,3),audio,used:false,at:Date.now()});toast(`Saved. It's waiting for ${them}.`);$('#wForm').reset();syncAudio();listMine()}catch(err){toast('Could not save. Check your connection.')}
   btn.disabled=false};
  listMine();
@@ -723,7 +725,7 @@ async function openWrite(){
 async function listMine(){
  try{const qs=await DB.collection('custom').where('author','==',ME).get();const rows=qs.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.at-a.at);
   $('#wList').innerHTML=rows.length?rows.map(r=>`<div class="list-item"><div class="row" style="gap:10px;min-width:0">${icon(r.cat)}<div style="min-width:0"><div style="overflow-wrap:anywhere">${esc(r.q)}</div><div class="muted" style="font-size:13px">${esc(r.a)} · ${TIER[r.tier].n}${r.audio?' · with clip':''} · ${r.used?'used':'waiting'}</div></div></div><button class="btn ghost small" data-del="${r.id}">Delete</button></div>`).join(''):'<div class="empty">Nothing yet.</div>';
-  $$('[data-del]').forEach(b=>b.onclick=async()=>{b.disabled=true;await DB.doc('custom/'+b.dataset.del).delete().catch(()=>{});listMine()});
+  $$('[data-del]').forEach(b=>b.onclick=async()=>{b.disabled=true;const row=rows.find(x=>x.id===b.dataset.del);if(row&&row.audio&&String(row.audio).startsWith('clip:'))await DB.doc('clips/'+row.audio.slice(5)).delete().catch(()=>{});await DB.doc('custom/'+b.dataset.del).delete().catch(()=>{});listMine()});
  }catch(e){$('#wList').innerHTML='<div class="empty">Could not load your questions.</div>'}
 }
 
