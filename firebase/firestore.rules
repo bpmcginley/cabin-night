@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Everything lives under houses/<house key>/... Only signed-in (anonymous) players who
+    // know the house key can reach it, and nobody can list the houses themselves.
+    match /houses/{house}/{document=**} {
+      allow read, write: if request.auth != null && house.size() >= 8;
+    }
+  }
+}
