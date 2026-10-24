@@ -11,5 +11,5 @@ window.CN_CONFIG = {
   },
   // Your Cloudflare Worker address, e.g. "https://cabin-night.yourname.workers.dev" (no trailing slash).
   // Leave empty to skip Deezer song clips and Claude-written questions.
-  workerUrl: ""
+  workerUrl: "https://cabin-night.bpmcginley.workers.dev"
 };
