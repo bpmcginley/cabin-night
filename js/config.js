@@ -2,11 +2,12 @@
 window.CN_CONFIG = {
   // From Firebase console > Project settings > Your apps > Web app > Config
   firebase: {
-    apiKey: "PASTE_API_KEY",
-    authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
-    projectId: "PASTE_PROJECT_ID",
-    storageBucket: "PASTE_PROJECT_ID.firebasestorage.app",
-    appId: "PASTE_APP_ID"
+    apiKey: "AIzaSyAs2NlWVPra8F4mCMpqtcmCfuxjeTS_rJ4",
+    authDomain: "beaming-mode-436723-v5.firebaseapp.com",
+    projectId: "beaming-mode-436723-v5",
+    storageBucket: "beaming-mode-436723-v5.firebasestorage.app",
+    messagingSenderId: "393696929617",
+    appId: "1:393696929617:web:06d3eb68eb8ef7199e1570"
   },
   // Your Cloudflare Worker address, e.g. "https://cabin-night.yourname.workers.dev" (no trailing slash).
   // Leave empty to skip Deezer song clips and Claude-written questions.

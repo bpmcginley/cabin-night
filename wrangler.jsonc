@@ -1,0 +1,9 @@
+// Cloudflare Worker config. Cloudflare Workers Builds deploys worker/worker.js from this repo.
+// Secrets (HOUSE_KEY, ANTHROPIC_API_KEY) are set in the Cloudflare dashboard, never here.
+{
+  "name": "cabin-night",
+  "main": "worker/worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "keep_vars": true
+}
