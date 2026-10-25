@@ -769,6 +769,7 @@ function renderHouse(msg){
  const c=$('#hkCancel');if(c)c.onclick=()=>{show('home');renderHome()};
 }
 async function boot(){
+ const tb=$('.topbar');const setTop=()=>document.documentElement.style.setProperty('--top-h',tb.offsetHeight+'px');setTop();try{new ResizeObserver(setTop).observe(tb)}catch(e){addEventListener('resize',setTop)}
  setMuteIcon();$('#muteBtn').onclick=()=>{MUTED=!MUTED;store.set('cn.muted',MUTED);setMuteIcon()};
  $('#goHome').onclick=()=>{if(ROOM)goHome();else{show('home');renderHome()}};
  $('#seatBtn').onclick=()=>setMe(ME==='bruce'?'meredith':'bruce');
