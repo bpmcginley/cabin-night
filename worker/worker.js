@@ -46,7 +46,7 @@ export default {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': API_VERSION, 'content-type': 'application/json'},
-          body: JSON.stringify({model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 12000, messages: [{role: 'user', content: prompt(spice)}]}),
+          body: JSON.stringify({model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 16000, messages: [{role: 'user', content: prompt(spice)}]}),
         });
         const d = await r.json();
         if (!r.ok) return json({error: (d.error && d.error.message) || 'Claude API error'}, 502);
@@ -81,10 +81,10 @@ function pickTrack(data, a, t) {
 }
 
 function prompt(spice) {
-  return `Write fresh trivia for a cozy two-player couples' game night. Return ONLY a JSON array of 48 objects, no other text.
-Categories (field "cat"): "gk" general knowledge, "mus" music (any era: pop, rock, classical, jazz, instruments, theory), "thr" theatre (plays, musicals, Broadway, West End, Shakespeare, stagecraft), "sci" science (physics, chemistry, biology, space, earth science).
+  return `Write fresh trivia for a cozy two-player couples' game night. Return ONLY a JSON array of 60 objects, no other text.
+Categories (field "cat"): "gk" general knowledge (geography, food, sport, film, TV, language, everyday facts), "mus" music (mostly 1970s to today: pop, rock, hip-hop, R&B, country, indie, albums, artists, music videos, award shows; at most one classical or pre-1970 question per tier), "thr" theatre (plays, musicals, Broadway, West End, Shakespeare, stagecraft), "sci" science (physics, chemistry, biology, space, earth science, technology), "his" history (ancient to modern, all regions of the world, inventions, leaders, wars, explorers, everyday life in the past).
 Tiers (field "tier"): 1 Easy (most adults know it), 2 Medium, 3 Hard (an enthusiast would know), 4 Expert (a deep cut, still fair).
-Write exactly 3 questions for every category and tier pair (4 categories x 4 tiers x 3 = 48).
-Each object: {"cat":"sci","tier":2,"q":"question text","a":"short answer, 1-4 words","alts":["other accepted spellings or forms"],"wrong":["three plausible wrong answers"]}.
-Rules: answers must be factual, unambiguous and not likely to change; no trick wording; questions under 140 characters; the 3 wrong answers must be clearly wrong but believable and the same type as the answer; vary topics widely.${spice ? ' This round, lean a little toward: ' + spice + '.' : ''}`;
+Write exactly 3 questions for every category and tier pair (5 categories x 4 tiers x 3 = 60).
+Each object: {"cat":"his","tier":2,"q":"question text","a":"short answer, 1-4 words","alts":["other accepted spellings or forms"],"wrong":["three plausible wrong answers"]}.
+Rules: answers must be factual, unambiguous and not likely to change; no trick wording; questions under 140 characters; the 3 wrong answers must be clearly wrong but believable and the same type as the answer; never use yes/no or true/false questions; vary topics widely and avoid the most overused trivia facts.${spice ? ' This round, lean a little toward: ' + spice + '.' : ''}`;
 }

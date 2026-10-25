@@ -1,6 +1,6 @@
 # Cabin Night
 
-A cozy two-player game night for Bruce and Meredith. It has a 3D territory map or a fireside mantel, with trivia (General Knowledge, Music, Theatre, Science), Name That Tune, Word Play and Guess Each Other rounds. You can play versus or co-op, and there's a daily word puzzle and a rivalry ledger.
+A cozy two-player game night for Bruce and Meredith. It has three boards (Territory, a 3D map; Frontier, a head-to-head map where you grow out from your own cabin and raid each other; and Fireside, a mantel of gifts), with trivia (General Knowledge, Music, Theatre, Science, History), Name That Tune, Word Play and Guess Each Other rounds, plus Double Down, lightning rounds and Final Frost. You can play versus or co-op, and there's a daily word puzzle and a rivalry ledger.
 
 **Hosting:** the game is a static site on GitHub Pages.
 **Backend:**
@@ -48,7 +48,7 @@ The Firebase web config isn't a secret, so committing it to a public repo is fin
    - `MODEL` (Text): optional. Defaults to `claude-sonnet-5-5`.
 4. Copy the Worker's `https://cabin-night.<you>.workers.dev` address into `workerUrl` in `js/config.js`.
 
-**Cost of Claude questions:** each game asks for 48 questions, roughly 5–10 cents with Sonnet at current prices. Without the key, the game uses its 222 built-in questions.
+**Cost of Claude questions:** each game asks for 60 questions, roughly 5–15 cents with Sonnet at current prices. Without the key, the game uses its 428 built-in trivia questions.
 
 ### 4. GitHub Pages
 1. Commit your edited `js/config.js`.

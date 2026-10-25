@@ -60,7 +60,13 @@ window.CNBackend = (function(){
     const base = (cfg.workerUrl || '').replace(/\/+$/, '');
     if (!base) return null;
     const call = async (path, opts = {}) => {
-      const r = await fetch(base + path, {...opts, headers: {'x-house': house, 'content-type': 'application/json', ...(opts.headers || {})}});
+      // Song lookups and pings give up after 8 seconds so a slow network never freezes a turn.
+      let ctl = null, timer = null;
+      if (!opts.signal) { ctl = new AbortController(); timer = setTimeout(() => ctl.abort(), 8000); }
+      let r;
+      try { r = await fetch(base + path, {...opts, signal: opts.signal || ctl.signal, headers: {'x-house': house, 'content-type': 'application/json', ...(opts.headers || {})}}); }
+      catch (e) { throw {code: e && e.name === 'AbortError' ? (opts.signal ? 'cancelled' : 'timeout') : 'network'}; }
+      finally { clearTimeout(timer); }
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw {code: r.status === 403 ? 'forbidden' : 'worker_error', message: d.error || ('HTTP ' + r.status)};
       return d;

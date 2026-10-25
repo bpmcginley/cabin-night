@@ -387,6 +387,50 @@ table.hist td,table.hist th{padding:8px 6px;border-bottom:1px solid var(--line);
 .howto ol{margin:0;padding-left:20px;display:grid;gap:8px}
 .close-x{position:absolute;top:12px;right:12px}
 
+/* ---------- frontier, raids, double down, lightning, awards ---------- */
+.scene[data-n="6"]{--s:clamp(24px, min(10.6cqw, 16cqh), 104px)}
+.choice-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.choice[disabled]{opacity:.45;cursor:not-allowed}
+.board .tile.raid .top{box-shadow:inset 0 0 0 3px #ff6b4a, 0 0 18px rgba(255,90,60,.55);animation:raidpulse 1.6s ease-in-out infinite}
+.board .tile.raid.sel .top,.board .tile.raid:hover .top{box-shadow:inset 0 0 0 4px #ffb199, 0 0 26px rgba(255,110,70,.85)}
+@keyframes raidpulse{50%{box-shadow:inset 0 0 0 3px #ff9a7a, 0 0 28px rgba(255,90,60,.8)}}
+.board .tile.base .top{box-shadow:inset 0 0 0 3px rgba(255,255,255,.75)}
+.scene[data-n="6"] .tile.can:not(.raid) .top{box-shadow:inset 0 0 0 3px rgba(255,226,184,.9),0 0 18px rgba(255,210,150,.55)}
+.scene[data-n="6"] .tile.dim .top{filter:brightness(.5) saturate(.6)}
+.board .tile.dim[class*=own-] .top{filter:brightness(.8) saturate(.85)}
+.flag .fortmark{position:absolute;left:calc(45% - var(--s)*.14);bottom:calc(var(--s)*-.02);width:calc(var(--s)*.26);height:calc(var(--s)*.3);filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+.flag .fortmark svg{width:100%;height:100%}
+.flag .x2{position:absolute;left:calc(45% + var(--s)*.06);top:calc(var(--s)*.42);padding:1px 5px;border-radius:99px;background:#ffc94d;color:#2a1a0d;font:700 max(10px,calc(var(--s)*.14))/1.2 var(--body);box-shadow:0 2px 6px rgba(0,0,0,.45)}
+.flag.base .cloth{box-shadow:inset 0 -4px 0 rgba(0,0,0,.15),0 0 0 2px #fff}
+.center-hud.frost .label{color:#bfe6ff}
+.center-hud.frost .big{color:#e6f6ff;text-shadow:0 0 14px rgba(160,220,255,.8)}
+.ddchip{display:inline-flex;width:max-content;max-width:100%;justify-self:start;align-self:flex-start;align-items:center;gap:8px;margin-top:8px;padding:5px 12px 5px 5px;border-radius:99px;border:1px solid #6b5124;background:rgba(255,201,77,.08);color:var(--ink);font:600 14px var(--body);cursor:pointer;transition:background .2s,border-color .2s,transform .12s}
+.ddchip:hover{border-color:#ffc94d;transform:translateY(-1px)}
+.ddchip i{font-style:normal;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#2a2016;color:#ffc94d;font-weight:800;font-size:12px}
+.ddchip span{color:var(--muted);font-weight:500;font-size:13px}
+.ddchip[aria-pressed="true"]{background:#ffc94d;border-color:#ffc94d;color:#2a1a0d}
+.ddchip[aria-pressed="true"] i{background:#2a2016}
+.ddchip[aria-pressed="true"] span{color:#5a3f10}
+.tagx{color:#ffd08a;font-weight:700}
+.lbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-6px 0 14px;padding:8px 12px;border-radius:12px;background:linear-gradient(110deg,rgba(255,212,107,.22),rgba(255,212,107,.05));border:1px solid rgba(255,212,107,.45)}
+.lbanner svg{width:22px;height:22px;color:#ffd46b;flex:none;animation:flick 1.8s ease-in-out infinite}
+.lbanner b{font-family:var(--display);font-weight:400;font-size:20px;color:#ffe7a8}
+.lbanner span{color:var(--muted);font-size:13px}
+.lt-log{display:grid;gap:8px}
+.lt-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
+.lt-row .n{font-family:var(--display);color:var(--muted)}
+.awards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;text-align:left}
+.award{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);animation:mysIn .6s cubic-bezier(.2,.9,.3,1.3) backwards}
+.award:nth-child(2){animation-delay:.1s}.award:nth-child(3){animation-delay:.2s}.award:nth-child(4){animation-delay:.3s}.award:nth-child(5){animation-delay:.4s}.award:nth-child(6){animation-delay:.5s}
+.award>div{display:grid;min-width:0}
+.award span{font-size:13px}
+@media (max-width:640px){
+  .choice-grid.three{grid-template-columns:1fr}
+  .awards{grid-template-columns:1fr}
+  .plate .b-dd{display:none}
+  .dock .dock-actions .stakes{display:none}
+}
+
 @media (max-width:900px){
   .home-grid{grid-template-columns:1fr}
   .home-lower{grid-template-columns:1fr}
@@ -469,6 +513,7 @@ table.hist td,table.hist th{padding:8px 6px;border-bottom:1px solid var(--line);
 <script src="js/backend.js"></script>
 <script src="js/data.js"></script>
 <script src="js/bank-extra.js"></script>
+<script src="js/bank-3.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
