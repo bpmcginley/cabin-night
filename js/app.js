@@ -200,9 +200,9 @@ async function makeQuestion(R,cat,tier,act){
  }
  if(cat==='tune'){
   if(ONLINE&&Math.random()<.4){try{const qs=await DB.collection('custom').where('used','==',false).get();const c=qs.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.cat==='tune'&&x.audio&&(R.mode==='coop'||x.author===opp));if(c.length){const x=pick(c);DB.doc('custom/'+x.id).update({used:true}).catch(()=>{});return {kind:'tune',tier,text:x.q||'Name that tune!',audio:x.audio,a:x.a,alts:x.alts||[],ch:tier<=2&&x.wrong&&x.wrong.length>=3?shuffle([x.a,...x.wrong.slice(0,3)]):null,src:'custom',by:x.author}}}catch(e){}}
-  if(WORKER&&typeof SONGS!=='undefined'&&Math.random()<.75){
+  if(WORKER&&typeof SONGS!=='undefined'){
    const all=SONGS[tier]||[];let pool=all.filter(s=>!R.used.includes('s'+s.t));if(!pool.length)pool=all;
-   for(const s of shuffle(pool).slice(0,3)){try{const res=await WORKER.tune(s.q||`artist:"${s.a}" track:"${s.t}"`);if(res&&res.found&&res.preview){R.used.push('s'+s.t);
+   for(const s of shuffle(pool).slice(0,3)){try{const res=await WORKER.tune(s.q||(s.a+' '+s.t),s.a||'',s.t);if(res&&res.found&&res.preview){R.used.push('s'+s.t);
      const others=shuffle(all.filter(o=>o.t!==s.t)).slice(0,3).map(o=>o.t);
      return {kind:'tune',tier,text:'Name that song!',preview:res.preview,clip:CLIP_SECONDS[tier],a:s.t,alts:[s.t.replace(/\s*\(.*?\)\s*/g,' ').trim(),...(s.alts||[])],ch:tier<=2?shuffle([s.t,...others]):null,artist:res.artist||s.a||'',show:s.s||'',src:'deezer'}}}catch(e){if(e&&e.code==='forbidden'){toast('The song server rejected your house key.');break}}}
   }

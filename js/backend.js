@@ -67,7 +67,7 @@ window.CNBackend = (function(){
     };
     return {
       // Look up one song's 30-second Deezer preview.
-      tune: q => call('/tune?q=' + encodeURIComponent(q)),
+      tune: (q, a, t) => call('/tune?q=' + encodeURIComponent(q) + '&a=' + encodeURIComponent(a || '') + '&t=' + encodeURIComponent(t || '')),
       // Ask Claude (through the Worker) for fresh trivia. Returns the raw text.
       questions: (spice, signal) => call('/questions', {method: 'POST', body: JSON.stringify({spice}), signal}),
       ping: () => call('/ping'),
