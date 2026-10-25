@@ -48,7 +48,7 @@ The Firebase web config isn't a secret, so committing it to a public repo is fin
    - `MODEL` (Text): optional. Defaults to `claude-sonnet-5-5`.
 4. Copy the Worker's `https://cabin-night.<you>.workers.dev` address into `workerUrl` in `js/config.js`.
 
-**Cost of Claude questions:** each game asks for 60 questions, roughly 5–15 cents with Sonnet at current prices. Without the key, the game uses its 428 built-in trivia questions.
+**Cost of Claude questions:** each game asks for 80 new questions (two batches of 40 written at the same time), roughly 10–20 cents with Sonnet at current prices. They are used before the built-in ones, and any that repeat a built-in question or one from an earlier game are thrown out. Without the key, the game uses its 1,000 built-in trivia questions (200 per category), and it remembers which ones you have seen so it picks new ones first.
 
 ### 4. GitHub Pages
 1. Commit your edited `js/config.js`.

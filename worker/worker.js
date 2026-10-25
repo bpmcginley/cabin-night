@@ -2,7 +2,7 @@
    Routes:
      GET  /ping                -> {ok:true, ai:boolean}
      GET  /tune?q=...          -> first Deezer search hit with a 30s preview
-     POST /questions {spice}   -> {text} written by Claude (needs ANTHROPIC_API_KEY)
+     POST /questions {spice, tiers, avoid} -> {text} written by Claude (needs ANTHROPIC_API_KEY)
    Secrets (Settings > Variables and Secrets):
      HOUSE_KEY          required: the same house key you both type into the game
      ANTHROPIC_API_KEY  optional: enables Claude-written questions
@@ -43,10 +43,19 @@ export default {
         if (!env.ANTHROPIC_API_KEY) return json({error: 'Claude questions are not set up on this Worker'}, 501);
         const body = await req.json().catch(() => ({}));
         const spice = String(body.spice || '').replace(/[^\w ,'&-]/g, '').slice(0, 300);
+        const tiers = (Array.isArray(body.tiers) ? body.tiers : [1, 2, 3, 4]).map(Number).filter(t => [1, 2, 3, 4].includes(t)).slice(0, 4);
+        // avoid: {category: [answers already used]} so Claude writes about new things. Capped to keep the request small.
+        const avoid = {}; let budget = 24000;
+        for (const c of ['gk', 'mus', 'thr', 'sci', 'his']) {
+          const list = Array.isArray(body.avoid && body.avoid[c]) ? body.avoid[c] : [];
+          const keep = [];
+          for (const a of list) { const v = String(a).replace(/[\n\r;]/g, ' ').slice(0, 40); if (!v || budget - v.length < 0) break; budget -= v.length + 2; keep.push(v); }
+          if (keep.length) avoid[c] = keep;
+        }
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': API_VERSION, 'content-type': 'application/json'},
-          body: JSON.stringify({model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 16000, messages: [{role: 'user', content: prompt(spice)}]}),
+          body: JSON.stringify({model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 16000, messages: [{role: 'user', content: prompt(spice, tiers.length ? tiers : [1, 2, 3, 4], avoid)}]}),
         });
         const d = await r.json();
         if (!r.ok) return json({error: (d.error && d.error.message) || 'Claude API error'}, 502);
@@ -80,11 +89,15 @@ function pickTrack(data, a, t) {
   return bestScore > -3 ? best : null;
 }
 
-function prompt(spice) {
-  return `Write fresh trivia for a cozy two-player couples' game night. Return ONLY a JSON array of 60 objects, no other text.
+function prompt(spice, tiers, avoid) {
+  const per = 4, n = 5 * tiers.length * per;
+  const names = {1: '1 Easy (most adults know it)', 2: '2 Medium', 3: '3 Hard (an enthusiast would know)', 4: '4 Expert (a deep cut, still fair)'};
+  const avoidText = Object.entries(avoid || {}).map(([c, list]) => `${c}: ${list.join('; ')}`).join('\n');
+  return `Write fresh trivia for a cozy two-player couples' game night. Return ONLY a JSON array of ${n} objects, no other text.
 Categories (field "cat"): "gk" general knowledge (geography, food, sport, film, TV, language, everyday facts), "mus" music (mostly 1970s to today: pop, rock, hip-hop, R&B, country, indie, albums, artists, music videos, award shows; at most one classical or pre-1970 question per tier), "thr" theatre (plays, musicals, Broadway, West End, Shakespeare, stagecraft), "sci" science (physics, chemistry, biology, space, earth science, technology), "his" history (ancient to modern, all regions of the world, inventions, leaders, wars, explorers, everyday life in the past).
-Tiers (field "tier"): 1 Easy (most adults know it), 2 Medium, 3 Hard (an enthusiast would know), 4 Expert (a deep cut, still fair).
-Write exactly 3 questions for every category and tier pair (5 categories x 4 tiers x 3 = 60).
-Each object: {"cat":"his","tier":2,"q":"question text","a":"short answer, 1-4 words","alts":["other accepted spellings or forms"],"wrong":["three plausible wrong answers"]}.
-Rules: answers must be factual, unambiguous and not likely to change; no trick wording; questions under 140 characters; the 3 wrong answers must be clearly wrong but believable and the same type as the answer; never use yes/no or true/false questions; vary topics widely and avoid the most overused trivia facts.${spice ? ' This round, lean a little toward: ' + spice + '.' : ''}`;
+Tiers (field "tier"): only ${tiers.map(t => names[t]).join(', ')}.
+Write exactly ${per} questions for every category and tier pair (5 categories x ${tiers.length} tiers x ${per} = ${n}).
+Each object: {"cat":"his","tier":${tiers[0]},"q":"question text","a":"short answer, 1-4 words","alts":["other accepted spellings or forms"],"wrong":["three plausible wrong answers"]}.
+Rules: answers must be factual, unambiguous and not likely to change; no trick wording; questions under 140 characters; the 3 wrong answers must be clearly wrong but believable and the same type as the answer; never use yes/no or true/false questions; vary topics widely and avoid the most overused trivia facts.${spice ? ' This round, lean a little toward: ' + spice + '.' : ''}
+${avoidText ? `These players already have questions with the answers below. Do NOT write a question whose answer is any of these, and do not ask about the same fact in different words. Pick different people, places, works and facts:\n${avoidText}` : ''}`;
 }

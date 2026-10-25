@@ -64,7 +64,7 @@ const SEASONS=[
 const TERRAIN_NAME={meadow:'the meadow',pines:'the pines',lake:'the lake',ridge:'the ridge',peak:'the summit'};
 const hashId=s=>{let x=7;for(const c of String(s))x=(x*31+c.charCodeAt(0))|0;return 'b'+(x>>>0).toString(36)};
 // Old music rows (BANK/BANK2) are replaced by BANK3's 1970s-to-today music set.
-const BANK_OBJS=(()=>{const rows=[...BANK,...(typeof BANK2!=='undefined'?BANK2:[])].filter(b=>b[0]!=='mus').concat(typeof BANK3!=='undefined'?BANK3:[],typeof BANK_PICK!=='undefined'?BANK_PICK:[]);
+const BANK_OBJS=(()=>{const rows=[...BANK,...(typeof BANK2!=='undefined'?BANK2:[])].filter(b=>b[0]!=='mus').concat(typeof BANK3!=='undefined'?BANK3:[],typeof BANK4!=='undefined'?BANK4:[],typeof BANK_PICK!=='undefined'?BANK_PICK:[]);
  const seen=new Set(),out=[];for(const b of rows){const id=hashId(b[2]);if(seen.has(id))continue;seen.add(id);out.push({id,cat:b[0],tier:b[1],q:b[2],a:b[3],wrong:b[4],alts:b[5]||[],pick:!!(b[6]&&b[6].pick)})}return out})();
 
 /* ---------- in-memory db for practice mode ---------- */
@@ -220,7 +220,7 @@ function newState(code,o){
   slots:board==='territory'?makeMap(o.mode):board==='frontier'?makeFrontier():Array.from({length:5},()=>newGift(o.mode,0,max)),
   scores:{bruce:0,meredith:0},wood:8,cards:{bruce:[],meredith:[]},dd:{bruce:3,meredith:3},extraPending:null,lastLightning:0,
   effects:{bruce:eff(),meredith:eff()},aw:{bruce:blankAw(),meredith:blankAw()},
-  playedCard:false,round:null,last:null,used:[],avoid:(o.avoid||[]).slice(0,900),aiQs:o.aiQs||[],stats:{bruce:{},meredith:{}},result:null,next:null,ledgerDone:false};
+  playedCard:false,round:null,last:null,used:[],aiQs:o.aiQs||[],stats:{bruce:{},meredith:{}},result:null,next:null,ledgerDone:false};
 }
 function territoryScore(R,s){return R.slots.reduce((a,t)=>a+(t.owner===s?t.tier*(t.dbl?2:1):0),0)}
 function score(R,s){return isMap(R)?territoryScore(R,s):R.scores[s]}
@@ -239,42 +239,48 @@ function typedFor(R,s){const r=R.round,q=r.q;if(q.kind==='us'||q.pick)return fal
 function fogApplies(q,kind){return q.kind!=='us'&&!q.pick&&(kind!=='race'||q.kind==='tune')&&!(q.kind==='trivia'&&q.tier>=3)&&!!q.ch}
 
 /* ---------- question building ---------- */
+/* Questions you've seen in past games (most recent first), shared by both players through Firestore. */
+let SEENQ=[],SEENRANK=new Map(),SEEN_AI=[];
+function setSeen(o){SEENQ=(o&&o.ids)||[];SEEN_AI=(o&&o.ai)||[];SEENRANK=new Map(SEENQ.map((id,i)=>[id,i]))}
+// Order a pool: never-seen first (random), then seen ones from longest ago, then anything already used tonight.
+function rankOrder(R,pool,idOf){const used=new Set(R.used),never=[],old=[],again=[];
+ for(const x of pool){const id=idOf(x);if(used.has(id))again.push(x);else if(SEENRANK.has(id))old.push(x);else never.push(x)}
+ old.sort((a,b)=>SEENRANK.get(idOf(b))-SEENRANK.get(idOf(a)));return [...shuffle(never),...old,...shuffle(again)]}
+const freshPick=(R,pool,idOf)=>rankOrder(R,pool,idOf)[0];
 async function makeQuestion(R,cat,tier,act,opt={}){
- const opp=other(act);const avoid=new Set(R.avoid||[]);
+ const opp=other(act);
  const customOK=ONLINE&&R.mode==='versus'&&!opt.lightning;
  if(TRIVIA.includes(cat)){
   if(customOK&&Math.random()<.45){try{const qs=await DB.collection('custom').where('used','==',false).get();const c=qs.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.cat===cat&&x.author===opp);if(c.length){const x=pick(c);DB.doc('custom/'+x.id).update({used:true}).catch(()=>{});return {kind:'trivia',tier,text:x.q,a:x.a,alts:x.alts||[],ch:x.wrong&&x.wrong.length>=3?shuffle([x.a,...x.wrong.slice(0,3)]):null,src:'custom',by:x.author,noSteal:true}}}catch(e){}}
-  const fresh=b=>!R.used.includes(b.id);
-  const ai=(R.aiQs||[]).filter(x=>x.cat===cat&&x.tier===tier&&fresh(x));
-  let x;
-  if(ai.length&&Math.random()<.55)x=pick(ai);
-  else{const tiers=opt.lightning?[1,2]:[tier];
-   let pool=BANK_OBJS.filter(b=>b.cat===cat&&tiers.includes(b.tier)&&fresh(b)&&!avoid.has(b.id));
-   if(!pool.length)pool=ai.length?ai:BANK_OBJS.filter(b=>b.cat===cat&&tiers.includes(b.tier)&&fresh(b));
-   if(!pool.length)pool=BANK_OBJS.filter(b=>b.cat===cat&&fresh(b));
-   if(!pool.length)pool=BANK_OBJS.filter(b=>b.cat===cat);x=pick(pool)}
+  const tiers=opt.lightning?[1,2]:[tier];const used=new Set(R.used);
+  const aiFresh=(R.aiQs||[]).filter(q=>q.cat===cat&&!used.has(q.id)&&!SEENRANK.has(q.id));
+  const bank=BANK_OBJS.filter(b=>b.cat===cat&&tiers.includes(b.tier));
+  let x=pick(aiFresh.filter(q=>tiers.includes(q.tier)))||null;
+  if(!x){const never=bank.filter(b=>!used.has(b.id)&&!SEENRANK.has(b.id));x=pick(never)||null}
+  if(!x)x=pick(aiFresh.filter(q=>tiers.some(t=>Math.abs(q.tier-t)<=1)))||null;
+  if(!x)x=freshPick(R,bank.length?bank:BANK_OBJS.filter(b=>b.cat===cat),b=>b.id);
   R.used.push(x.id);
   return {kind:'trivia',tier:opt.lightning?(x.tier||tier):tier,text:x.q,a:x.a,alts:x.alts||[],ch:shuffle([x.a,...x.wrong.slice(0,3)]),pick:!!(x.pick||opt.lightning),src:x.id.startsWith('ai')?'ai':'bank'};
  }
  if(cat==='word'){
-  if(tier>=3&&Math.random()<.5){const pool=VOWELLESS[tier].filter(p=>!R.used.includes('v'+p[0]));const [p,h]=pick(pool.length?pool:VOWELLESS[tier]);R.used.push('v'+p);return {kind:'vowel',tier,text:'Put the vowels back in. Spaces stay where they are.',shown:p.replace(/[AEIOU]/g,''),a:p,alts:[],hint:h,src:'bank'}}
-  const pool=WORDS[tier].filter(w=>!R.used.includes('w'+w[0]));const [w,h]=pick(pool.length?pool:WORDS[tier]);R.used.push('w'+w);
+  if(tier>=3&&Math.random()<.5){const [p,h]=freshPick(R,VOWELLESS[tier],x=>'v'+x[0]);R.used.push('v'+p);return {kind:'vowel',tier,text:'Put the vowels back in. Spaces stay where they are.',shown:p.replace(/[AEIOU]/g,''),a:p,alts:[],hint:h,src:'bank'}}
+  const [w,h]=freshPick(R,WORDS[tier],x=>'w'+x[0]);R.used.push('w'+w);
   let s=w;for(let i=0;i<20&&s===w;i++)s=shuffle(w.split('')).join('');
   return {kind:'anagram',tier,text:'Unscramble the word.',shown:s,a:w,alts:[],hint:h,exact:true,src:'bank'};
  }
  if(cat==='tune'){
   if(customOK&&Math.random()<.4){try{const qs=await DB.collection('custom').where('used','==',false).get();const c=qs.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.cat==='tune'&&x.audio&&x.author===opp);if(c.length){const x=pick(c);DB.doc('custom/'+x.id).update({used:true}).catch(()=>{});return {kind:'tune',tier,text:x.q||'Name that tune!',audio:x.audio,a:x.a,alts:x.alts||[],ch:tier<=2&&x.wrong&&x.wrong.length>=3?shuffle([x.a,...x.wrong.slice(0,3)]):null,src:'custom',by:x.author,solo:true}}}catch(e){}}
   if(WORKER&&typeof SONGS!=='undefined'){
-   const all=SONGS[tier]||[];let pool=all.filter(s=>!R.used.includes('s'+s.t)&&!avoid.has('s'+s.t));if(!pool.length)pool=all.filter(s=>!R.used.includes('s'+s.t));if(!pool.length)pool=all;
-   for(const s of shuffle(pool).slice(0,3)){try{const res=await WORKER.tune(s.q||(s.a+' '+s.t),s.a||'',s.t);if(res&&res.found&&res.preview){R.used.push('s'+s.t);
+   const all=SONGS[tier]||[];
+   for(const s of rankOrder(R,all,x=>'s'+x.t).slice(0,3)){try{const res=await WORKER.tune(s.q||(s.a+' '+s.t),s.a||'',s.t);if(res&&res.found&&res.preview){R.used.push('s'+s.t);
      const others=shuffle(all.filter(o=>o.t!==s.t)).slice(0,3).map(o=>o.t);
      return {kind:'tune',tier,text:'Name that song!',preview:res.preview,clip:CLIP_SECONDS[tier],a:s.t,alts:[s.t.replace(/\s*\(.*?\)\s*/g,' ').trim(),...(s.alts||[])],ch:tier<=2?shuffle([s.t,...others]):null,artist:res.artist||s.a||'',show:s.s||'',src:'deezer'}}}catch(e){if(e&&e.code==='forbidden'){toast('The song server rejected your house key.');break}}}
   }
-  let pool=TUNES.filter(t=>t.t===tier&&!R.used.includes(t.id));if(!pool.length)pool=TUNES.filter(t=>t.t===tier);const t=pick(pool);R.used.push(t.id);
+  const t=freshPick(R,TUNES.filter(x=>x.t===tier),x=>x.id);R.used.push(t.id);
   const others=shuffle(TUNES.filter(o=>o.id!==t.id&&Math.abs(o.t-t.t)<=1)).slice(0,3).map(o=>o.title);
   return {kind:'tune',tier,text:'Name that tune!',tune:t.id,a:t.title,alts:t.alts,ch:tier<=2?shuffle([t.title,...others]):null,src:'bank'};
  }
- let pool=US.filter((u,i)=>u.t===tier&&!R.used.includes('u'+i));if(!pool.length)pool=US.filter(u=>u.t===tier);const u=pick(pool);R.used.push('u'+US.indexOf(u));
+ const u=freshPick(R,US.filter(x=>x.t===tier),x=>'u'+US.indexOf(x));R.used.push('u'+US.indexOf(u));
  return {kind:'us',tier,text:u.q,opts:u.o,src:'bank'};
 }
 
@@ -464,24 +470,43 @@ async function writeLedger(R){
    L.counted=[key,...L.counted].slice(0,80);
    await DB.doc('meta/ledger').set(L);LEDGER=L;
    // remember which questions you've seen, so the next games pick fresh ones first
-   try{const s=await DB.doc('meta/seen').get();const old=s.exists&&s.data().ids||[];const ids=[...new Set([...(R.used||[]).slice().reverse(),...old])].slice(0,900);await DB.doc('meta/seen').set({ids,at:Date.now()})}catch(e){}
+   try{const s=await DB.doc('meta/seen').get();const d=s.exists?s.data():{};const ids=[...new Set([...(R.used||[]).slice().reverse(),...(d.ids||[])])].slice(0,3000);
+    const usedAI=(R.aiQs||[]).filter(x=>R.used.includes(x.id)).map(x=>({c:x.cat,q:x.q,a:x.a}));const ai=[...usedAI,...(d.ai||[])].slice(0,600);
+    await DB.doc('meta/seen').set({ids,ai,at:Date.now()});setSeen({ids,ai})}catch(e){}
   }
   await roomRef().update({ledgerDone:true});
  }catch(e){}finally{writeLedger.busy=null}
 }
-async function loadSeen(){try{const s=await DB.doc('meta/seen').get();return s.exists&&s.data().ids||[]}catch(e){return[]}}
+async function loadSeen(){try{const s=await DB.doc('meta/seen').get();const d=s.exists?s.data():{};setSeen({ids:d.ids||[],ai:d.ai||[]})}catch(e){}return {ids:SEENQ,ai:SEEN_AI}}
 /* ---------- AI questions ---------- */
+const qWords=s=>new Set(norm(s).split(' ').filter(w=>w.length>2&&!/^(the|and|which|what|who|whose|was|were|for|with|from|this|that|its|are|did|does|how|many|name|called|known|first|famous|into|has|had|his|her|their)$/.test(w)));
+function overlap(a,b){let x=0;a.forEach(w=>{if(b.has(w))x++});return x/Math.max(1,a.size+b.size-x)}
+// The answers Claude is told not to reuse: every built-in answer plus Claude's own from past games.
+function avoidList(){const by={};const add=(c,a)=>{const v=String(a||'').trim();if(!v||/^-?[\d.,]+$/.test(v)||/^(true|false)$/i.test(v))return;(by[c]=by[c]||new Set()).add(v.slice(0,40))};
+ BANK_OBJS.forEach(b=>add(b.cat,b.a));SEEN_AI.forEach(x=>add(x.c,x.a));const out={};for(const c in by)out[c]=[...by[c]];return out}
+// Drop anything that repeats a built-in question, one of Claude's past questions, or another question in the batch.
+function dropCopies(list){
+ const known=[...BANK_OBJS.map(b=>({c:b.cat,q:b.q,a:b.a})),...SEEN_AI].map(k=>{const w=qWords(k.q);return {c:k.c,a:norm(k.a),w,wa:new Set([...w,...qWords(k.a)])}});
+ const out=[];
+ for(const x of list){const a=norm(x.a),w=qWords(x.q);const num=/^-?[\d.,]+$/.test(a);
+  // Same fact = same answer (for numbers, also a similar question), or nearly the same wording and answer.
+  const wa=new Set([...w,...qWords(x.a)]);
+  const clash=k=>k.c===x.cat&&((k.a===a&&(!num||overlap(w,k.w)>=.3))||overlap(wa,k.wa||new Set([...k.w,...qWords(k.a)]))>=.75);
+  if(SEENRANK.has(x.id)||known.some(clash)||out.some(o=>clash({c:o.cat,a:norm(o.a),w:qWords(o.q)})))continue;
+  out.push(x)}
+ return out}
 async function generateAI(onCount,signal){
- const spice=shuffle(['film and TV','space missions','famous inventors','world geography','2000s pop','2010s hits','90s alternative','hip-hop','country music','music videos','Broadway revivals','Shakespeare','the human body','ocean life','the Olympics','food origins','ancient Rome','ancient Egypt','the Cold War','explorers','medieval life','US presidents','world leaders','weather','kitchen chemistry','landmarks','dinosaurs','languages','art history','animals','technology','the West End']).slice(0,8).join(', ');
- let n=0;const tick=setInterval(()=>{n=Math.min(56,n+1);onCount(n)},1500);
- let res;try{res=await WORKER.questions(spice,signal)}finally{clearInterval(tick)}
- const txt=String(res&&res.text||'');const a=txt.indexOf('['),b=txt.lastIndexOf(']');
- let out;try{out=JSON.parse(txt.slice(a,b+1))}catch(e){throw{code:'invalid_json'}}
- if(!Array.isArray(out))throw{code:'invalid_json'};onCount(60);
- return out.filter(x=>x&&CATS[x.cat]&&CATS[x.cat].kind==='turn'&&[1,2,3,4].includes(+x.tier)&&x.q&&x.a&&Array.isArray(x.wrong)&&x.wrong.length>=3&&!/^(true|false|yes|no)$/i.test(String(x.a).trim()))
-  .map((x,i)=>({id:'ai'+Date.now().toString(36)+i,cat:x.cat,tier:+x.tier,q:String(x.q).slice(0,220),a:String(x.a).slice(0,80),alts:Array.isArray(x.alts)?x.alts.map(String).slice(0,5):[],wrong:x.wrong.map(String).slice(0,3)}));
+ const spice=()=>shuffle(['film and TV','space missions','famous inventors','world geography','2000s pop','2010s hits','90s alternative','hip-hop','country music','music videos','Broadway revivals','Shakespeare','the human body','ocean life','the Olympics','food origins','ancient Rome','ancient Egypt','the Cold War','explorers','medieval life','US presidents','world leaders','weather','kitchen chemistry','landmarks','dinosaurs','languages','art history','animals','technology','the West End','sports history','mythology','architecture','inventions','famous trials','islands','board games','fashion history','space probes','the Renaissance','R&B','indie rock','pop divas','award shows','film musicals','opera houses']).slice(0,8).join(', ');
+ const avoid=avoidList();let n=0;const tick=setInterval(()=>{n=Math.min(74,n+1);onCount(n)},900);
+ const parse=res=>{const txt=String(res&&res.text||'');const a=txt.indexOf('['),b=txt.lastIndexOf(']');try{const v=JSON.parse(txt.slice(a,b+1));return Array.isArray(v)?v:[]}catch(e){return[]}};
+ let parts;try{parts=await Promise.allSettled([WORKER.questions(spice(),signal,{tiers:[1,2],avoid}),WORKER.questions(spice(),signal,{tiers:[3,4],avoid})])}finally{clearInterval(tick)}
+ if(signal&&signal.aborted)throw{code:'cancelled'};
+ const ok=parts.filter(p=>p.status==='fulfilled');if(!ok.length)throw (parts[0].reason||{code:'worker_error'});
+ const raw=ok.flatMap(p=>parse(p.value));if(!raw.length)throw{code:'invalid_json'};onCount(80);
+ const clean=raw.filter(x=>x&&TRIVIA.includes(x.cat)&&[1,2,3,4].includes(+x.tier)&&x.q&&x.a&&Array.isArray(x.wrong)&&x.wrong.length>=3&&!/^(true|false|yes|no)$/i.test(String(x.a).trim())&&!x.wrong.map(norm).includes(norm(x.a)))
+  .map(x=>({id:'ai'+hashId(x.q).slice(1),cat:x.cat,tier:+x.tier,q:String(x.q).slice(0,220),a:String(x.a).slice(0,80),alts:Array.isArray(x.alts)?x.alts.map(String).slice(0,5):[],wrong:x.wrong.map(String).slice(0,3)}));
+ return dropCopies(clean);
 }
-
 /* ================= SCREENS ================= */
 /* ---------- home ---------- */
 function windowArt(){return `<div class="window" aria-hidden="true"><div class="moon"></div><div class="hill"></div><div class="hill b"></div>
@@ -555,7 +580,7 @@ async function openSetup(){
   <div class="panel stack"><h3>Season</h3><p class="muted" style="margin:0">New seasons unlock as you play more games together (${L.games} played).</p><div class="season-grid">
    ${SEASONS.map(s=>{const lock=L.games<s.need;return `<button class="choice" data-k="season" data-v="${s.id}" aria-pressed="${SETUP.season===s.id}" ${lock?'disabled':''}><div class="swatch" style="background:${s.sw}"></div><b style="font-size:16px">${s.n}</b><span>${lock?`Unlocks at ${s.need} games`:'Unlocked'}</span></button>`}).join('')}
   </div></div>
-  <label class="toggle"><input type="checkbox" id="sAI" ${SETUP.ai&&AI_OK?'checked':''} ${AI_OK?'':'disabled'}><span><b>Mix in fresh questions written by Claude</b><br><span class="muted">${AI_OK?'Writes 60 new questions before the game starts (about a minute). Built-in questions fill any gaps.':'Not set up yet (add your Claude API key to the Worker). The built-in set has '+BANK_OBJS.length+' trivia questions.'}</span></span></label>
+  <label class="toggle"><input type="checkbox" id="sAI" ${SETUP.ai&&AI_OK?'checked':''} ${AI_OK?'':'disabled'}><span><b>Mix in fresh questions written by Claude</b><br><span class="muted">${AI_OK?'Writes 80 brand-new questions before the game starts (under a minute). They come first, and any that repeat a question you already have are thrown out.':'Not set up yet (add your Claude API key to the Worker). The built-in set has '+BANK_OBJS.length+' trivia questions.'}</span></span></label>
   <div class="panel stack"><h3>Stakes <span class="muted" style="font-family:var(--body);font-size:14px">(optional)</span></h3>
    <input type="text" id="sStakes" maxlength="80" placeholder="Winner picks the next movie" value="${esc(SETUP.stakes)}">
    <div class="stake-chips">${['Winner picks the next movie','Loser writes a love note','Winner picks dinner','Loser plans the next date','Winner gets a 10-minute back rub'].map(s=>`<button data-stake="${esc(s)}">${esc(s)}</button>`).join('')}</div></div>
@@ -568,12 +593,12 @@ async function openSetup(){
  $('#sBack').onclick=()=>{show('home');renderHome()};
  $('#sGo').onclick=async()=>{
   SETUP.stakes=$('#sStakes').value.trim();SETUP.ai=$('#sAI').checked;const go=$('#sGo');go.disabled=true;
-  let aiQs=[];
+  let aiQs=[];await loadSeen();
   if(SETUP.ai&&AI_OK){const box=$('#sGen');box.hidden=false;const ctl=new AbortController();$('#sSkip').onclick=()=>ctl.abort();
-   try{aiQs=await generateAI(n=>{$('#sBar').style.width=Math.min(100,n/60*100)+'%';$('#sCount').textContent=`${n} of 60 written`},ctl.signal);toast(`${aiQs.length} fresh questions added.`)}
+   try{aiQs=await generateAI(n=>{$('#sBar').style.width=Math.min(100,n/80*100)+'%';$('#sCount').textContent=`${n} of 80 written`},ctl.signal);toast(`${aiQs.length} brand-new questions added. They come first tonight.`)}
    catch(e){if(e&&e.code!=='cancelled')toast(e&&e.code==='forbidden'?'The Worker rejected your house key. Using the built-in set.':'Could not write fresh questions this time. Using the built-in set.')}
    box.hidden=true}
-  try{const code=await newCode();const avoid=await loadSeen();const R=newState(code,{...SETUP,aiQs,avoid});await DB.doc('rooms/'+code).set(R);await joinRoom(code)}catch(e){toast('Could not create the game. Check your connection and try again.')}
+  try{const code=await newCode();const R=newState(code,{...SETUP,aiQs});await DB.doc('rooms/'+code).set(R);await joinRoom(code)}catch(e){toast('Could not create the game. Check your connection and try again.')}
   go.disabled=false;
  };
 }
@@ -584,7 +609,7 @@ function leaveRoom(){if(unsubRoom)unsubRoom();if(unsubAns)unsubAns();unsubRoom=u
 async function joinRoom(code){
  let snap;try{snap=await DB.doc('rooms/'+code).get()}catch(e){return toast('Could not reach the game. Check your connection.')}
  if(!snap.exists)return toast(`No game found with code ${code}.`);
- leaveRoom();CODE=code;show('game');$('#hud').innerHTML='';$('#stage').innerHTML='';$('#dock').innerHTML='';SEEN=new Set();
+ leaveRoom();CODE=code;show('game');loadSeen();$('#hud').innerHTML='';$('#stage').innerHTML='';$('#dock').innerHTML='';SEEN=new Set();
  const R=snap.data();
  try{if(PRACTICE())await DB.doc('rooms/'+code).update({seats:{bruce:'local',meredith:'local'}});else if(R.seats[ME]!==(UID||'guest'))await DB.doc('rooms/'+code).update({seats:{[ME]:UID||'guest'}})}catch(e){}
  unsubRoom=DB.doc('rooms/'+code).onSnapshot(s=>{if(!s.exists){toast('That game was removed.');return}ROOM=s.data();onRoom()},()=>toast('Lost the live connection. Reload the page to reconnect.'));
@@ -840,7 +865,7 @@ function overCard(R){
 function wireOver(R,key){
  if(!wireOver.done)wireOver.done={};if(!wireOver.done[key]){wireOver.done[key]=1;const res=R.result||{};if(res.coop?res.win:(PRACTICE()||res.winner===ME||res.winner==='tie'))confetti()}
  $('#oHome').onclick=goHome;$('#oLedger').onclick=()=>{leaveRoom();openLedger()};$('#oView').onclick=()=>{HIDE_REVEAL=key;closeOverlay()};
- const re=$('#oRe');if(re)re.onclick=async()=>{re.disabled=true;try{const code=await newCode();const N=newState(code,{board:R.board,mode:R.mode,season:R.season,stakes:R.stakes,aiQs:(R.aiQs||[]).filter(x=>!R.used.includes(x.id)),avoid:[...(R.used||[]).slice().reverse(),...(R.avoid||[])]});await DB.doc('rooms/'+code).set(N);await roomRef().update({next:code});joinRoom(code)}catch(e){re.disabled=false;toast('Could not start a rematch.')}};
+ const re=$('#oRe');if(re)re.onclick=async()=>{re.disabled=true;try{const code=await newCode();const N=newState(code,{board:R.board,mode:R.mode,season:R.season,stakes:R.stakes,aiQs:(R.aiQs||[]).filter(x=>!R.used.includes(x.id))});await DB.doc('rooms/'+code).set(N);await roomRef().update({next:code});joinRoom(code)}catch(e){re.disabled=false;toast('Could not start a rematch.')}};
  const nx=$('#oNext');if(nx)nx.onclick=()=>joinRoom(R.next);
 }
 
@@ -976,6 +1001,6 @@ async function boot(){
  SETUP.ai=false;
  renderHome();
 }
-if(/[?&]cntest\b/.test(location.search))window.__cnTest={room:()=>ROOM,legal:(p)=>{const L=legalTiles(ROOM,p);return {expand:[...L.expand],raid:[...L.raid],boxed:L.boxed}},bank:()=>BANK_OBJS};
+if(/[?&]cntest\b/.test(location.search))window.__cnTest={room:()=>ROOM,seen:()=>SEENQ.length,legal:(p)=>{const L=legalTiles(ROOM,p);return {expand:[...L.expand],raid:[...L.raid],boxed:L.boxed}},bank:()=>BANK_OBJS};
 boot();
 })();
