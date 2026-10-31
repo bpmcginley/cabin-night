@@ -154,7 +154,7 @@ function mysKinds(mode,n){
 }
 const TRIVIA=['gk','mus','thr','sci','his'];
 const isMap=R=>R.board!=='fireside';
-const adj=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y)===1;
+const adj=(a,b)=>Math.max(Math.abs(a.x-b.x),Math.abs(a.y-b.y))===1;
 const dist=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
 function finalTurn(R){return R.endsAt!=null?Math.min(R.maxTurns,R.endsAt):R.maxTurns}
 function turnsLeft(R){return finalTurn(R)-R.turnNo}
@@ -642,7 +642,7 @@ async function fillHome(){
 }
 function showHowTo(){const o=$('#overlay');o.hidden=false;OVKEY='howto';o.innerHTML=`<div class="qcard flip howto" style="--c:var(--ember)"><button class="icon-btn close-x" id="hx" aria-label="Close">✕</button><h2 style="margin-bottom:12px">How to play</h2><ol>
  <li><b>Start a game</b> and send the 4-letter code. Both of you open this page and join with it.</li>
- <li><b>Boards.</b> <b>Territory</b> (6×6): claim any open tile. <b>Frontier</b> (7×7, versus): your cabins start in random spots far apart, and you can only play tiles that touch your land (sides, not corners). <b>Fireside</b>: no map, just gifts on the mantel. Every map is a new random landscape.</li>
+ <li><b>Boards.</b> <b>Territory</b> (6×6): claim any open tile. <b>Frontier</b> (7×7, versus): your cabins start in random spots far apart, and you can only play tiles that touch your land, including corners. <b>Fireside</b>: no map, just gifts on the mantel. Every map is a new random landscape.</li>
  <li><b>Raids</b> (versus maps): an opponent's tile that touches yours glows red. Raid it with a question one step harder. Miss, and they can defend it and fortify it for good.</li>
  <li><b>Each tile</b> shows its category and difficulty dots: 1 Easy to 4 Expert. Harder means more points.</li>
  <li><b>Trivia</b> (Knowledge, Music, Theatre, Science, History): you answer first. Miss, and the other player can steal. <b>Tunes and Word Play</b> are races: fastest right answer wins. <b>Guess Each Other</b>: they answer about themselves, you guess what they picked.</li>
@@ -775,7 +775,7 @@ function wirePZ(st){
  const snap=()=>{const v=[...pts.values()];if(v.length>=2){const [a,b]=v;return {d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2}}return v.length?{d:0,x:v[0].x,y:v[0].y}:null};
  sc.addEventListener('pointerdown',e=>{if(e.button>0)return;pts.set(e.pointerId,{x:e.clientX,y:e.clientY,x0:e.clientX,y0:e.clientY});if(pts.size===1)PZ_MOVED=false;last=snap()});
  const move=e=>{const p=pts.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;
-  if(Math.hypot(p.x-p.x0,p.y-p.y0)>8)PZ_MOVED=true;const now=snap();if(!last||!now)return;
+  if(Math.hypot(p.x-p.x0,p.y-p.y0)>14)PZ_MOVED=true;const now=snap();if(!last||!now)return;
   if(pts.size>=2&&last.d>0){const [cx,cy]=center();zoomAt(PZ.z*now.d/last.d,now.x-cx,now.y-cy)}
   if(PZ.z>1.001||pts.size>=2){PZ.x+=now.x-last.x;PZ.y+=now.y-last.y;applyPZ()}
   last=now};
@@ -793,7 +793,7 @@ function buildBoard(st){
   const cabin=t.cabin?`<div class="bb cabin-deco" style="left:calc(30% - var(--s)*.27);top:calc(26% - var(--s)*.5)">${CABIN_SVG}</div>`:'';
   return `<div class="tile ${t.terrain} enter" data-id="${t.id}" role="button" tabindex="-1" style="left:calc(var(--s)*${t.x});top:calc(var(--s)*${t.y});--h:calc(var(--s)*${(t.h/96).toFixed(3)});--top:var(--${v});--side:var(--${v}-s);--d:${(t.x+t.y)*60}ms"><div class="fe"></div><div class="fs"></div><div class="top"><i class="mark"></i></div>${deco}${cabin}<div class="slotbb" data-owner="">${badgeHTML(t)}</div></div>`}).join('')}</div></div></div>
   <div class="zoomctl" aria-label="Map zoom"><button class="icon-btn" id="zIn" aria-label="Zoom in">+</button><button class="icon-btn" id="zOut" aria-label="Zoom out" disabled>−</button><button class="icon-btn" id="zFit" aria-label="Fit the whole map" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div>`;
- const pickTile=e=>{if(PZ_MOVED)return;const tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can'))return;SEL=tile.dataset.id;updateBoard();renderDock()};
+ const pickTile=e=>{if(PZ_MOVED)return;let tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can')){const under=document.elementsFromPoint(e.clientX,e.clientY).map(x=>x.closest&&x.closest('.tile.can')).find(Boolean);tile=under||tile}if(!tile||!tile.classList.contains('can'))return;SEL=tile.dataset.id;updateBoard();renderDock()};
  $('#board').onclick=pickTile;
  $('#board').onkeydown=e=>{if(e.key!=='Enter'&&e.key!==' ')return;const tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can'))return;e.preventDefault();SEL=tile.dataset.id;updateBoard();renderDock();$('#dPlay')&&$('#dPlay').focus()};
  wirePZ(st);applyPZ();
@@ -894,7 +894,7 @@ function renderOverlay(force){
   const lk=r.id+r.stage+'|'+s;
   if(LOCAL.key!==lk){stopTimer();stopClip();LOCAL={key:lk,submitted:mineDone,startT:performance.now(),played:0,handed:!PRACTICE()}}
   if(HIDE_REVEAL===lk&&!force)return;
-  const need=needSeats(R).map(x=>x+(hasAns(R,x)?1:0)).join();
+  const need=(LOCAL.submitted||role==='watch')?needSeats(R).map(x=>x+(hasAns(R,x)?1:0)).join():'';
   const key=`round|${lk}|${role}|${LOCAL.submitted}|${need}|${LOCAL.handed}`;
   if(key===OVKEY&&!force)return;
   const prev=OVKEY;OVKEY=key;o.hidden=false;o.innerHTML=questionCard(R,s,role,!(prev&&prev.startsWith('round|'+lk+'|')));wireQuestion(R,s,role);return;

@@ -446,7 +446,9 @@ table.hist td,table.hist th{padding:8px 6px;border-bottom:1px solid var(--line);
 
 /* ---------- zoomable maps, events, end-of-game ribbon ---------- */
 .scene{touch-action:none;-webkit-user-select:none;user-select:none}
-.pz{transform-style:preserve-3d;will-change:transform}
+.pz{transform-style:preserve-3d;will-change:transform;pointer-events:none}
+.pz .tile{pointer-events:auto}
+.board::before{pointer-events:none}
 .zoomctl{position:absolute;right:max(12px, env(safe-area-inset-right,0px));bottom:10px;display:flex;flex-direction:column;gap:6px;z-index:6}
 .zoomctl .icon-btn{width:40px;height:40px;background:rgba(14,24,32,.85);border-color:var(--line);font-size:22px;line-height:1;color:var(--ink)}
 .zoomctl .icon-btn[disabled]{opacity:.35}
