@@ -117,7 +117,14 @@ const PRACTICE=()=>!ONLINE;
 /* ---------- audio ---------- */
 let AC=null,MASTER=null;
 function ac(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();MASTER=AC.createGain();MASTER.gain.value=.9;const d=AC.createDelay();d.delayTime.value=.19;const fb=AC.createGain();fb.gain.value=.24;const wet=AC.createGain();wet.gain.value=.28;MASTER.connect(AC.destination);MASTER.connect(d);d.connect(fb);fb.connect(d);d.connect(wet);wet.connect(AC.destination)}catch(e){AC=null}}if(AC&&AC.state==='suspended')AC.resume();return AC}
-document.addEventListener('pointerdown',()=>ac(),{once:true});
+// iPhones only allow sound that starts from a tap. On the first tap, wake the sound engine and play a
+// silent clip through the same audio player the songs use, so later clips can start on their own.
+let AUDIO_UNLOCKED=false;
+function silentWav(){const n=800,b=new ArrayBuffer(44+n),v=new DataView(b);const w=(o,t)=>[...t].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+ w(0,'RIFF');v.setUint32(4,36+n,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);v.setUint32(28,8000,true);v.setUint16(32,1,true);v.setUint16(34,8,true);w(36,'data');v.setUint32(40,n,true);for(let i=0;i<n;i++)v.setUint8(44+i,128);
+ return URL.createObjectURL(new Blob([b],{type:'audio/wav'}))}
+function unlockAudio(){ac();if(AUDIO_UNLOCKED)return;AUDIO_UNLOCKED=true;try{const a=clipPlayer(silentWav());const p=a.play();if(p&&p.then)p.then(()=>a.pause()).catch(()=>{AUDIO_UNLOCKED=false})}catch(e){AUDIO_UNLOCKED=false}}
+['touchend','click','keydown'].forEach(ev=>document.addEventListener(ev,unlockAudio,{passive:true}));
 function midi(n){const m=/^([A-G])(#|b)?(\d)$/.exec(n);const base={C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1]];return 12*(+m[3]+1)+base+(m[2]==='#'?1:m[2]==='b'?-1:0)}
 function pluck(f,t,dur,vol=.3){const c=AC;const g=c.createGain();g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+.008);g.gain.exponentialRampToValueAtTime(.0001,t+dur);g.connect(MASTER);[[1,1],[2,.3],[3,.08],[4.2,.04]].forEach(([m,a])=>{const o=c.createOscillator();o.type='sine';o.frequency.value=f*m;const og=c.createGain();og.gain.value=a;o.connect(og).connect(g);o.start(t);o.stop(t+dur+.05)})}
 function playTune(t){const c=ac();if(!c)return 0;const notes=t.n.split(/\s+/).map(x=>{const [n,d]=x.split(':');return [n,parseFloat(d)]});const mids=notes.filter(n=>n[0]!=='R').map(n=>midi(n[0]));const shift=Math.max(...mids)<=76?12:0;const beat=60/t.bpm;let at=c.currentTime+.08;for(const [n,d] of notes){if(n!=='R'){const f=440*Math.pow(2,(midi(n)+shift-69)/12);pluck(f,at,Math.min(1.8,Math.max(.5,d*beat*2.2)),.28)}at+=d*beat}return at-c.currentTime+.4}
@@ -141,89 +148,158 @@ function correct(q,ans){if(!ans||!ans.v)return false;const v=ans.v;if(v===q.a)re
 
 /* ---------- board / gifts generation ---------- */
 function rep(x,n){return Array(n).fill(x)}
-function mysKinds(mode,board){if(mode==='coop')return shuffle(['wood','wood','calm','gust','gust']);return shuffle(['card','card','double','extra',board==='territory'?pick(['ice','wolf']):'ice'])}
+function mysKinds(mode,n){
+ const k=mode==='coop'?['wood','wood','wood','calm','gust','gust','wood']:['card','card','double','double','extra',pick(['ice','wolf']),'card'];
+ return shuffle(k).slice(0,n);
+}
 const TRIVIA=['gk','mus','thr','sci','his'];
 const isMap=R=>R.board!=='fireside';
 const adj=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y)===1;
+const dist=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
 function finalTurn(R){return R.endsAt!=null?Math.min(R.maxTurns,R.endsAt):R.maxTurns}
-function frostOn(R){if(!R||R.mode!=='versus'||R.phase==='lobby')return false;if(finalTurn(R)-R.turnNo<=4)return true;return R.board==='territory'&&R.slots.filter(t=>!t.owner).length<=4}
+function turnsLeft(R){return finalTurn(R)-R.turnNo}
+function frostOn(R){if(!R||R.mode!=='versus'||R.phase==='lobby')return false;return turnsLeft(R)<=4}
+// Which tiles the player on turn may play. Territory: any open tile, plus raids on the
+// opponent's tiles that touch your land. Frontier: only open tiles touching your land, plus raids.
 function legalTiles(R,p){
  const open=R.slots.filter(t=>!t.owner&&!t.base).map(t=>t.id);
- if(R.board!=='frontier')return {expand:new Set(open),raid:new Set(),boxed:false};
+ if(!isMap(R))return {expand:new Set(open),raid:new Set(),boxed:false};
  const mine=R.slots.filter(t=>t.owner===p);const touch=t=>mine.some(m=>adj(m,t));
+ const raid=R.mode==='versus'?R.slots.filter(t=>t.owner===other(p)&&!t.base&&!t.fort&&touch(t)).map(t=>t.id):[];
+ if(R.board!=='frontier')return {expand:new Set(open),raid:new Set(raid),boxed:false};
  const expand=R.slots.filter(t=>!t.owner&&touch(t)).map(t=>t.id);
- const raid=R.slots.filter(t=>t.owner===other(p)&&!t.base&&!t.fort&&touch(t)).map(t=>t.id);
  return {expand:new Set(expand.length?expand:open),raid:new Set(raid),boxed:!expand.length&&open.length>0};
 }
 const blankAw=()=>({steals:0,fast:1e9,mind:0,hit:0,raids:0,defends:0});
+
+/* ---- random landscapes: hills, valleys and lakes land somewhere new every game ---- */
+const DECO_SPOTS=[[.22,.24],[.76,.28],[.26,.78],[.8,.74],[.5,.18],[.18,.52]];
+function decoFor(terrain){const deco=[];
+ if(terrain==='pines')shuffle(DECO_SPOTS).slice(0,2+Math.floor(Math.random()*2)).forEach(p=>deco.push({k:'tree',x:p[0],y:p[1],s:.8+Math.random()*.4}));
+ else if(terrain==='meadow'&&Math.random()<.4){const p=pick(DECO_SPOTS);deco.push({k:'tree',x:p[0],y:p[1],s:.7})}
+ else if(terrain==='ridge'||terrain==='peak'){const p=pick(DECO_SPOTS.slice(0,4));deco.push({k:'rock',x:p[0],y:p[1],s:1})}
+ return deco}
+const rankOf=a=>{const idx=a.map((v,i)=>i).sort((x,y)=>a[x]-a[y]);const r=Array(a.length);idx.forEach((i,k)=>r[i]=k/Math.max(1,a.length-1));return r};
+// Height field from random bumps. Difficulty leans higher on hills but is mixed with noise,
+// so hard and easy tiles are scattered: about 30% Easy, 30% Medium, 25% Hard, 15% Expert.
+function genLand(N){
+ const bumps=Array.from({length:Math.max(4,N)},()=>({x:Math.random()*(N-1),y:Math.random()*(N-1),a:(Math.random()<.7?1:-.8)*(.5+Math.random()*.7),r:.8+Math.random()*1.7}));
+ const H=[];for(let y=0;y<N;y++)for(let x=0;x<N;x++){let h=Math.random()*.25;for(const b of bumps)h+=b.a*Math.exp(-((x-b.x)**2+(y-b.y)**2)/(b.r*b.r));H.push(h)}
+ const hr=rankOf(H),dr=rankOf(H.map((h,i)=>hr[i]*.5+Math.random()*.5));
+ return H.map((_,i)=>{const q=hr[i],d=dr[i];
+  const terrain=q<.12?'lake':q<.42?'meadow':q<.7?'pines':q<.9?'ridge':'peak';
+  return {x:i%N,y:Math.floor(i/N),terrain,tier:d<.3?1:d<.6?2:d<.85?3:4,h:{lake:6,meadow:11,pines:16,ridge:24,peak:40}[terrain],deco:decoFor(terrain)}});
+}
+// Spread categories so the same one rarely sits next to itself.
+function spreadCats(tiles,cats){
+ const N=Math.round(Math.sqrt(tiles.length));const sh=shuffle(cats);let k=0;
+ const c=tiles.map(t=>t.base?null:sh[k++]);const free=tiles.map((t,i)=>i).filter(i=>c[i]!=null);
+ const bad=i=>{const x=i%N,y=Math.floor(i/N);return c[i]!=null&&((x>0&&c[i-1]===c[i])||(y>0&&c[i-N]===c[i])||(x<N-1&&c[i+1]===c[i])||(y<N-1&&c[i+N]===c[i]))};
+ for(let pass=0;pass<5;pass++)for(const i of free)if(bad(i)){for(let t=0;t<10;t++){const j=pick(free);[c[i],c[j]]=[c[j],c[i]];if(!bad(i)&&!bad(j))break;[c[i],c[j]]=[c[j],c[i]]}}
+ tiles.forEach((t,i)=>{if(c[i]!=null)t.cat=c[i]});
+}
 function makeMap(mode){
- const cats=shuffle([...rep('gk',3),...rep('mus',3),...rep('thr',3),...rep('sci',3),...rep('his',3),...rep('word',3),...rep('tune',3),...rep('us',3),pick(TRIVIA)]);
- const lake=pick([[15,16,20,21],[8,9,13,14],[3,4,9]]);
- const mysIdx=shuffle([...Array(25).keys()].filter(i=>i!==0)).slice(0,5);const kinds=mysKinds(mode,'territory');
- const spots=[[.22,.24],[.76,.28],[.26,.78],[.8,.74],[.5,.18],[.18,.52]];
- const slots=[];
- for(let y=0;y<5;y++)for(let x=0;x<5;x++){const i=y*5+x,d=x+y;let terrain,tier,h;
-  if(i===0){terrain='peak';tier=4;h=44}
-  else if(d<=1){terrain='ridge';tier=4;h=32}
-  else if(d===2){terrain='ridge';tier=3;h=24}
-  else if(lake.includes(i)){terrain='lake';tier=Math.random()<.5?3:2;h=6}
-  else if(d>=6||i===12){terrain='meadow';tier=d>=7?1:(Math.random()<.6?1:2);h=11}
-  else{terrain=Math.random()<.22?'meadow':'pines';tier=terrain==='meadow'?1:(d<=4&&Math.random()<.35?3:2);h=terrain==='meadow'?11:16}
-  if(i===12)tier=2;
-  const deco=[];
-  if(terrain==='pines'){shuffle(spots).slice(0,2+Math.floor(Math.random()*2)).forEach(p=>deco.push({k:'tree',x:p[0],y:p[1],s:.8+Math.random()*.4}))}
-  else if(terrain==='meadow'&&i!==12&&Math.random()<.5){const p=pick(spots);deco.push({k:'tree',x:p[0],y:p[1],s:.7})}
-  else if(terrain==='ridge'||terrain==='peak'){const p=pick(spots.slice(0,4));deco.push({k:'rock',x:p[0],y:p[1],s:1})}
-  const mi=mysIdx.indexOf(i);
-  slots.push({id:'t'+i,x,y,terrain,h,tier,cat:cats[i],mystery:mi>=0,mk:mi>=0?kinds[mi]:null,revealed:false,owner:null,dbl:false,deco,cabin:i===12});}
+ const N=6;const land=genLand(N);
+ const slots=land.map((l,i)=>({id:'t'+i,...l,cat:null,mystery:false,mk:null,revealed:false,owner:null,dbl:false,fort:false,gold:false,cabin:false}));
+ spreadCats(slots,[...TRIVIA,...TRIVIA,...TRIVIA,...TRIVIA,...rep('word',4),...rep('tune',4),...rep('us',4),...shuffle(TRIVIA).slice(0,4)]);
+ const cab=pick(slots.filter(t=>t.terrain==='meadow'))||slots[0];cab.cabin=true;cab.deco=[];
+ const kinds=mysKinds(mode,6);shuffle(slots.filter(t=>!t.cabin)).slice(0,6).forEach((t,i)=>{t.mystery=true;t.mk=kinds[i]});
  return slots;
 }
-// Frontier: 6x6, Bruce's cabin at the left corner (0,5), Meredith's at the right corner (5,0).
-// Mirror-symmetric: tile (x,y) and (5-x,5-y) always match, so neither side has an advantage.
+// Frontier: 7x7. Each cabin starts on a random square at least 6 steps apart. Out of many
+// random layouts, keep the one where the land around both cabins is most evenly matched.
 function makeFrontier(){
- const N=6,spots=[[.22,.24],[.76,.28],[.26,.78],[.8,.74],[.5,.18],[.18,.52]];
- const lake=pick([[[0,2],[1,2]],[[1,3],[1,4]],[[2,4],[3,5]]]);
- const isLake=(x,y)=>lake.some(([a,b])=>(a===x&&b===y)||(N-1-a===x&&N-1-b===y));
- const tiles=[];
- for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-  const dB=x+(N-1-y),dM=(N-1-x)+y,d=Math.min(dB,dM);let terrain,tier,h,base=null;
-  if(x===0&&y===N-1)base='bruce';else if(x===N-1&&y===0)base='meredith';
-  if(base){terrain='meadow';tier=0;h=11}
-  else if(x===y&&(x===2||x===3)){terrain='peak';tier=4;h=40}
-  else if(x===y){terrain='ridge';tier=3;h=26}
-  else if(isLake(x,y)){terrain='lake';tier=d<=2?1:2;h=6}
-  else if(d<=2){terrain='meadow';tier=1;h=11}
-  else{terrain='pines';tier=2;h=16}
-  tiles.push({id:'f'+(y*N+x),x,y,terrain,h,tier,base,owner:base,fort:false,cat:null,mystery:false,mk:null,revealed:false,dbl:false,deco:[],cabin:!!base});
+ const N=7;let best=null;
+ for(let tries=0;tries<40;tries++){
+  const land=genLand(N);
+  const pairs=[];for(let i=0;i<land.length;i++)for(let j=i+1;j<land.length;j++)if(dist(land[i],land[j])>=6)pairs.push([i,j]);
+  const [bi,mi]=pick(pairs);const flip=Math.random()<.5;const B=land[flip?mi:bi],M=land[flip?bi:mi];
+  const value=c=>land.reduce((a,t)=>{const d=dist(t,c);return t===B||t===M||d>3||d===0?a:a+(5-t.tier)/d},0);
+  const lakes=c=>land.filter(t=>dist(t,c)===1&&t.terrain==='lake').length;
+  const gap=Math.abs(value(B)-value(M))+Math.abs(lakes(B)-lakes(M))*.5;
+  if(!best||gap<best.gap)best={gap,land,B,M};
+  if(gap<.4)break;
  }
- const at=(x,y)=>tiles[y*N+x];
- const pairs=[];tiles.forEach(t=>{const m=at(N-1-t.x,N-1-t.y);if(!t.base&&t.y*N+t.x<m.y*N+m.x)pairs.push([t,m])});
- const cats=shuffle([...TRIVIA,...TRIVIA,'word','word','tune','tune','us','us',pick(TRIVIA)]);
- pairs.forEach((p,i)=>p.forEach(t=>t.cat=cats[i%cats.length]));
- const kinds=shuffle(['card','double',pick(['extra','ice','wolf'])]);
- shuffle(pairs.filter(([t])=>Math.min(t.x+(N-1-t.y),(N-1-t.x)+t.y)>=2)).slice(0,3).forEach((p,i)=>p.forEach(t=>{t.mystery=true;t.mk=kinds[i]}));
- pairs.forEach(([t,m])=>{const deco=[];
-  if(t.terrain==='pines')shuffle(spots).slice(0,2).forEach(p=>deco.push({k:'tree',x:p[0],y:p[1],s:.8+Math.random()*.3}));
-  else if(t.terrain==='ridge'||t.terrain==='peak'){const p=pick(spots.slice(0,4));deco.push({k:'rock',x:p[0],y:p[1],s:1})}
-  else if(t.terrain==='meadow'&&Math.random()<.35){const p=pick(spots);deco.push({k:'tree',x:p[0],y:p[1],s:.7})}
-  t.deco=deco;m.deco=deco.map(o=>({...o,x:1-o.x,y:1-o.y}));});
+ const {land,B,M}=best;
+ const tiles=land.map((l,i)=>{const base=l===B?'bruce':l===M?'meredith':null;
+  return {id:'f'+i,...l,...(base?{terrain:'meadow',tier:0,h:11,deco:[]}:{}),base,owner:base,fort:false,gold:false,cat:null,mystery:false,mk:null,revealed:false,dbl:false,cabin:!!base}});
+ spreadCats(tiles,[...rep(TRIVIA,7).flat(),...rep('word',4),...rep('tune',4),...rep('us',4)]);
+ const kinds=mysKinds('versus',5);
+ shuffle(tiles.filter(t=>!t.base&&dist(t,B)>=2&&dist(t,M)>=2)).slice(0,5).forEach((t,i)=>{t.mystery=true;t.mk=kinds[i]});
  return tiles;
 }
 function giftTier(turnNo,max){const p=turnNo/max;const w=p<.34?[.45,.4,.15,0]:p<.67?[.2,.4,.3,.1]:[.05,.25,.4,.3];let r=Math.random(),acc=0;for(let i=0;i<4;i++){acc+=w[i];if(r<=acc)return i+1}return 4}
-function newGift(mode,turnNo,max){const m=Math.random()<.25;return {id:'g'+rid(),cat:pick(Object.keys(CATS)),tier:giftTier(turnNo,max),mystery:m,mk:m?pick(mode==='coop'?['wood','calm','gust']:['card','double','extra','ice']):null,revealed:false,owner:null,dbl:false}}
+function newGift(mode,turnNo,max){const m=Math.random()<.25;return {id:'g'+rid(),gold:false,cat:pick(Object.keys(CATS)),tier:giftTier(turnNo,max),mystery:m,mk:m?pick(mode==='coop'?['wood','calm','gust']:['card','double','extra','ice']):null,revealed:false,owner:null,dbl:false}}
 function newState(code,o){
  const board=o.mode==='coop'&&o.board==='frontier'?'territory':o.board;
- const max=board==='territory'?45:board==='frontier'?36:16;
+ const max=board==='territory'?(o.mode==='coop'?55:50):board==='frontier'?40:16;
  const eff=()=>({fuse:false,fog:false,blizzard:false,skip:0});
- return {v:2,code,createdAt:Date.now(),host:ME,board,n:board==='frontier'?6:5,mode:o.mode,season:o.season,stakes:o.stakes||'',
+ return {v:2,code,createdAt:Date.now(),host:ME,board,n:board==='frontier'?7:board==='territory'?6:5,mode:o.mode,season:o.season,stakes:o.stakes||'',
   seats:{bruce:null,meredith:null},phase:'lobby',turn:pick(P),turnNo:0,maxTurns:max,endsAt:null,
   slots:board==='territory'?makeMap(o.mode):board==='frontier'?makeFrontier():Array.from({length:5},()=>newGift(o.mode,0,max)),
-  scores:{bruce:0,meredith:0},wood:8,cards:{bruce:[],meredith:[]},dd:{bruce:3,meredith:3},extraPending:null,lastLightning:0,
+  scores:{bruce:0,meredith:0},wood:8,cards:{bruce:[],meredith:[]},dd:{bruce:3,meredith:3},extraPending:null,lastLightning:0,nextEventAt:3+Math.floor(Math.random()*2),lastEvent:-1,lastEventKind:null,calmNext:false,
   effects:{bruce:eff(),meredith:eff()},aw:{bruce:blankAw(),meredith:blankAw()},
   playedCard:false,round:null,last:null,used:[],aiQs:o.aiQs||[],stats:{bruce:{},meredith:{}},result:null,next:null,ledgerDone:false};
 }
 function territoryScore(R,s){return R.slots.reduce((a,t)=>a+(t.owner===s?t.tier*(t.dbl?2:1):0),0)}
 function score(R,s){return isMap(R)?territoryScore(R,s):R.scores[s]}
+/* ---------- random events: one every 4-5 turns ---------- */
+const EV_ICON={
+ gold:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 7v10M9.5 9.5h4a1.5 1.5 0 0 1 0 3h-3a1.5 1.5 0 0 0 0 3h4"/></svg>',
+ supply:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
+ whiteout:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 16a4 4 0 0 1 .5-8 5 5 0 0 1 9.5 1.5A3.5 3.5 0 0 1 17 16z"/><path d="M8 20h8"/></svg>',
+ quake:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 12h4l2-6 4 12 3-9 2 3h5"/></svg>',
+ wolves:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 4l4 5h8l4-5-1 9-7 7-7-7z"/><circle cx="9.5" cy="12" r=".8" fill="currentColor"/><circle cx="14.5" cy="12" r=".8" fill="currentColor"/></svg>',
+ lights:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 16c3-6 6-9 9-9s6 3 9 9"/><path d="M6 19c2-4 4-6 6-6s4 2 6 6"/><path d="M12 2v2M5 5l1.5 1.5M19 5l-1.5 1.5"/></svg>',
+ lanterns:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 3h6M10 3v2M14 3v2M7 7h10l-1 12H8z"/><path d="M12 11v4"/></svg>',
+ duel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l10 10M14 4l-4 4M20 4L10 14M4 20l4-4M20 20l-4-4M6 14l4 4M18 14l-4 4"/></svg>',
+ thaw:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/></svg>',
+ warm:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg>',
+ gust:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8"/></svg>',
+};
+EV_ICON.cache=EV_ICON.supply;EV_ICON.calm=EV_ICON.warm;
+function leaderOf(R){const b=score(R,'bruce'),m=score(R,'meredith');return b>m?'bruce':m>b?'meredith':null}
+const stealable=(R,s)=>R.slots.filter(t=>t.owner===s&&!t.base&&!t.fort);
+function rollEvent(R){
+ const map=isMap(R),open=R.slots.filter(t=>!t.owner&&!t.base),lead=leaderOf(R),trail=lead&&other(lead);
+ const C=[];const add=(k,w)=>{if(k!==R.lastEventKind)C.push(...rep(k,w))};
+ if(R.mode==='coop'){add('warm',2);add('cache',1);if(R.wood>3)add('gust',2);add('calm',1);if(map&&open.filter(t=>!t.mystery).length>=2)add('lanterns',1)}
+ else{
+  if(!map||open.length>=3)add('gold',2);
+  if(P.some(s=>R.cards[s].length<3))add('supply',1);
+  add('whiteout',1);
+  if(map&&open.length>=4)add('quake',1);
+  if(lead&&(map?stealable(R,lead).length:R.scores[lead]>=2))add('wolves',1);
+  if(trail)add('lights',1);
+  if(!map||open.filter(t=>!t.mystery).length>=2)add('lanterns',1);
+  if(!map||P.every(s=>stealable(R,s).length))add('duel',2);
+  if(map&&R.slots.some(t=>t.fort))add('thaw',1);
+ }
+ if(!C.length)return null;
+ const k=pick(C);R.lastEventKind=k;const ev={k,tiles:[],good:true};
+ const pickOpen=n=>shuffle(open.filter(t=>!t.mystery&&!t.gold)).slice(0,n);
+ if(k==='gold'){if(map){const g=pickOpen(3);g.forEach(t=>t.gold=true);ev.tiles=g.map(t=>t.id);ev.title='Gold rush!';ev.text='Three open tiles are shining gold. Win one and it counts double.'}
+  else{const g=pick(R.slots);g.gold=true;ev.tiles=[g.id];ev.title='Gold rush!';ev.text='One gift on the mantel is wrapped in gold. Win it for double points.'}}
+ else if(k==='supply'){const got=P.filter(s=>R.cards[s].length<3);got.forEach(s=>R.cards[s].push(pick(Object.keys(SAB))));ev.title='Supply drop';ev.text=got.length===2?'A crate lands by the cabin. You each get a new sabotage card.':`A crate lands by the cabin. ${NAME[got[0]]} gets a new sabotage card.`}
+ else if(k==='whiteout'){P.forEach(s=>R.effects[s].fog=true);ev.good=false;ev.title='Whiteout';ev.text='Snow blots out the windows. Your next question with choices loses them, for both of you.'}
+ else if(k==='quake'){const tiers=shuffle(open.map(t=>t.tier));open.forEach((t,i)=>t.tier=tiers[i]);ev.tiles=open.map(t=>t.id);ev.good=false;ev.title='Tremor';ev.text='The ground shakes. Every open tile has a new difficulty. Check the dots before you pick.'}
+ else if(k==='wolves'){ev.good=false;ev.title='Wolf pack';
+  if(map){const t=pick(stealable(R,lead));t.owner=null;t.dbl=false;ev.tiles=[t.id];ev.text=`Wolves circle the leader. ${NAME[lead]} loses ${TERRAIN_NAME[t.terrain]}, and it's open again.`}
+  else{R.scores[lead]-=2;ev.text=`Wolves raid the leader's pantry. ${NAME[lead]} loses 2 points.`}}
+ else if(k==='lights'){R.dd[trail]=(R.dd[trail]||0)+1;const card=R.cards[trail].length<3?pick(Object.keys(SAB)):null;if(card)R.cards[trail].push(card);
+  ev.title='Northern lights';ev.text=`The sky lights up for whoever's behind. ${NAME[trail]} gets an extra Double Down${card?` and a “${SAB[card].n}” card`:''}.`}
+ else if(k==='lanterns'){if(map){const L=pickOpen(2);L.forEach(t=>{t.mystery=true;t.revealed=false;t.mk=R.mode==='coop'?pick(['wood','wood','calm','gust']):pick(['card','double','extra','ice'])});ev.tiles=L.map(t=>t.id)}
+  else{const g=shuffle(R.slots.filter(x=>!x.mystery)).slice(0,2);g.forEach(x=>{x.mystery=true;x.revealed=false;x.mk=R.mode==='coop'?pick(['wood','calm','gust']):pick(['card','double','extra','ice'])});ev.tiles=g.map(x=>x.id)}
+  ev.title='New lanterns';ev.text='Two new lanterns flicker on. Each hides a bonus or a trap.'}
+ else if(k==='duel'){ev.duel=true;ev.title='Duel at dawn';ev.text=map?'One question, both of you, fastest right answer wins. The winner takes one of the loser\'s tiles.':'One question, both of you, fastest right answer wins. The winner takes 3 points from the loser.'}
+ else if(k==='thaw'){const f=R.slots.filter(t=>t.fort);f.forEach(t=>t.fort=false);ev.tiles=f.map(t=>t.id);ev.good=false;ev.title='Spring thaw';ev.text='The ice melts off every fortified tile. They can all be raided again.'}
+ else if(k==='warm'){R.wood+=2;ev.title='Warm spell';ev.text='The wind drops for a while. +2 logs.'}
+ else if(k==='cache'){R.wood+=3;ev.title='Woodpile';ev.text='You find a dry woodpile behind the shed. +3 logs.'}
+ else if(k==='gust'){R.wood-=2;ev.good=false;ev.title='Cold snap';ev.text='A cold snap rolls through. The fire eats 2 logs.'}
+ else if(k==='calm'){R.calmNext=true;ev.title='Clear skies';ev.text='No storm damage on the next round.'}
+ return ev;
+}
+
 
 /* ---------- db helpers ---------- */
 const roomRef=()=>DB.doc('rooms/'+CODE);
@@ -292,7 +368,7 @@ async function pickSlot(id,dd){
   const R0=clone(ROOM);const slot0=R0.slots.find(s=>s.id===id);if(!slot0)return;
   const act=R0.turn,opp=other(act);
   const L=legalTiles(R0,act);if(!L.expand.has(id)&&!L.raid.has(id)){toast('You can only play tiles that touch your land.');return}
-  const raid=R0.board==='frontier'&&slot0.owner===opp;const kind=CATS[slot0.cat].kind;
+  const raid=isMap(R0)&&R0.mode==='versus'&&slot0.owner===opp;const kind=CATS[slot0.cat].kind;
   const E0=R0.mode==='versus'?R0.effects[act]:null;
   let tier=Math.min(4,slot0.tier+(raid?1:0)),bliz=false;
   if(E0&&E0.blizzard&&kind==='turn'&&tier<4){tier++;bliz=true}
@@ -317,12 +393,19 @@ async function playCard(i){
  R.cards[me].splice(i,1);if(k==='drift')R.effects[opp].skip=(R.effects[opp].skip||0)+1;else R.effects[opp][k]=true;R.playedCard=true;
  await setRoom(R);sfx('lock');toast(`${SAB[k].n} sent to ${NAME[opp]}.`);
 }
+function lightningRound(R,n,duel){const cat=pick(TRIVIA);return makeQuestion(R,cat,duel?2:pick([1,2]),R.turn,{lightning:true}).then(q=>{
+ R.round={id:'L'+R.turnNo+(duel?'d':'a')+rid(),slotId:null,cat,tier:q.tier,kind:'race',q,stage:'main',active:R.turn,resolver:R.turn,fx:{},lightning:{i:1,n,duel:!!duel,score:{bruce:0,meredith:0,team:0},log:[]}};R.phase='round'})}
 async function startTurn(){
- const R=clone(ROOM);R.round=null;R.playedCard=false;HIDE_REVEAL=null;
- if(R.turnNo>0&&R.turnNo%8===0&&R.lastLightning!==R.turnNo&&R.phase!=='over'){
-  R.lastLightning=R.turnNo;const cat=pick(TRIVIA);const q=await makeQuestion(R,cat,pick([1,2]),R.turn,{lightning:true});
-  R.round={id:'L'+R.turnNo+'a'+rid(),slotId:null,cat,tier:q.tier,kind:'race',q,stage:'main',active:R.turn,resolver:R.turn,fx:{},lightning:{i:1,n:3,score:{bruce:0,meredith:0,team:0},log:[]}};
-  R.phase='round';await setRoom(R);sfx('claim');return;
+ const R=clone(ROOM);R.round=null;R.playedCard=false;HIDE_REVEAL=null;if(R.phase==='over')return;
+ const left=turnsLeft(R);
+ if(R.turnNo>0&&R.turnNo%8===0&&R.lastLightning!==R.turnNo&&left>1){
+  R.lastLightning=R.turnNo;await lightningRound(R,3,false);await setRoom(R);sfx('claim');return;
+ }
+ if(R.nextEventAt!=null&&R.turnNo>=R.nextEventAt&&R.lastEvent!==R.turnNo&&left>1){
+  R.lastEvent=R.turnNo;R.nextEventAt=R.turnNo+4+Math.floor(Math.random()*2);
+  const ev=rollEvent(R);
+  if(ev&&ev.duel){await lightningRound(R,1,true);R.round.lightning.event=ev;await setRoom(R);sfx('claim');return}
+  if(ev){R.last={rid:'e'+R.turnNo+rid(),event:ev,headline:ev.title,claim:'event',next:R.turn,skipped:[],active:R.turn,res:{},q:{kind:'event'}};R.phase='reveal';await setRoom(R);return}
  }
  R.phase='pick';await setRoom(R);sfx('turn');
 }
@@ -373,18 +456,18 @@ async function resolveRound(){
  }
  // apply
  const slot=R.slots.find(s=>s.id===r.slotId);const before=clone(slot);let mys=null,flipped=false,fortified=false;
- const mult=R.mode==='versus'&&(r.dd||r.frost)?2:1;
+ const gold=!r.raid&&!!slot.gold;const mult=R.mode==='versus'&&(r.dd||r.frost||gold)?2:1;
  if(claim){
   if(r.raid){if(claim===act){slot.owner=act;flipped=true;R.aw[act].raids++}else{slot.fort=true;fortified=true;R.aw[opp].defends++}}
   else{
-   if(isMap(R)){slot.owner=claim;if(mult>1)slot.dbl=true}
+   if(isMap(R)){slot.owner=claim;if(mult>1)slot.dbl=true;slot.gold=false}
    if(slot.mystery&&!slot.revealed)mys=applyMystery(R,slot,claim==='team'?act:claim,info);
    if(R.board==='fireside'&&R.mode==='versus')R.scores[claim]+=slot.tier*mult;
    if(R.mode==='versus'&&res[claim]&&res[claim].steal)R.aw[claim].steals++;
   }
  }
  let woodDelta=0,storm=0;
- if(R.mode==='coop'){woodDelta=claim?2:-1;R.wood+=woodDelta;if(!info.calm){R.wood-=1;storm=1}}
+ if(R.mode==='coop'){woodDelta=claim?2:-1;R.wood+=woodDelta;const calm=info.calm||R.calmNext;R.calmNext=false;if(!calm){R.wood-=1;storm=1}}
  const pts=isMap(R)?(r.raid?slot.tier:before.tier*(slot.dbl?2:1)):before.tier*mult+(mys&&mys.kind==='double'?before.tier:0);
  if(R.board==='fireside'){const i=R.slots.findIndex(s=>s.id===r.slotId);R.slots[i]=newGift(R.mode,R.turnNo+1,R.maxTurns)}
  R.turnNo++;
@@ -395,7 +478,7 @@ async function resolveRound(){
  const skipped=[];
  for(let g=0;g<3;g++){const e=R.effects[next];const n=e?(+e.skip||0):0;if(n>0){e.skip=n-1;skipped.push(next);next=other(next)}else break}
  R.turn=next;
- if(R.board==='frontier'&&R.endsAt==null&&R.slots.every(t=>t.owner))R.endsAt=R.turnNo+4;
+ if(isMap(R)&&R.mode==='versus'&&R.endsAt==null&&R.slots.every(t=>t.owner))R.endsAt=R.turnNo+4;
  // headline
  let headline;const where=isMap(R)?TERRAIN_NAME[before.terrain]:'the gift';const Where=where[0].toUpperCase()+where.slice(1);
  if(R.mode==='versus'){
@@ -405,7 +488,7 @@ async function resolveRound(){
   else headline=r.kind==='us'?`Not quite. ${NAME[opp]} picked something else.`:isMap(R)?`Nobody got it. ${Where} stays open.`:'Nobody got it.';
  }else headline=claim?(r.kind==='us'?'You two are in sync. The fire grows.':'Nice teamwork. The fire grows.'):'Missed it. The storm bites.';
  R.last={rid:r.id,slotId:r.slotId,cat:r.cat,tier:r.tier,pts,kind:r.kind,q:{text:q.text,a:q.a,kind:q.kind,shown:q.shown||null,artist:q.artist||null,show:q.show||null},res,claim,headline,mys,next,skipped,extra:!!info.extra,extraWho:info.extraWho||null,woodDelta,storm,terrain:before.terrain||null,active:act,
-  raid:!!r.raid,flipped,fortified,dd:!!r.dd,ddLost,frost:!!r.frost&&mult>1&&!!claim&&!r.raid,fx:r.fx||{}};
+  raid:!!r.raid,flipped,fortified,dd:!!r.dd,ddLost,frost:!!r.frost&&mult>1&&!!claim&&!r.raid,gold:gold&&!!claim,fx:r.fx||{}};
  // end check
  let over=false,result=null;
  if(R.mode==='coop'){
@@ -414,7 +497,7 @@ async function resolveRound(){
   else if(R.board==='fireside'&&R.turnNo>=R.maxTurns)over=true,result={coop:true,win:true};
   else if(R.board==='territory'&&R.turnNo>=R.maxTurns)over=true,result={coop:true,win:false,timeout:true};
  }else{
-  const done=R.board==='territory'?(R.slots.every(t=>t.owner)||R.turnNo>=R.maxTurns):R.turnNo>=finalTurn(R);
+  const done=R.turnNo>=finalTurn(R);
   if(done){over=true;const b=score(R,'bruce'),m=score(R,'meredith');result={coop:false,winner:b>m?'bruce':m>b?'meredith':'tie',scores:{bruce:b,meredith:m}}}
  }
  if(R.mode==='coop'&&result)result.wood=Math.max(0,R.wood),result.claimed=R.slots.filter(t=>t.owner).length;
@@ -435,6 +518,13 @@ async function resolveLightning(R){
   R.round={...r,id:'L'+R.turnNo+'n'+lt.i+rid(),cat,tier:nq.tier,q:nq,stage:'main',lightning:{...lt,i:lt.i+1}};
   await setRoom(R);cleanupAns(old,null);return}
  let prize='',winner=null,headline;
+ if(lt.duel){const b=lt.score.bruce,m=lt.score.meredith;winner=b>m?'bruce':m>b?'meredith':null;const tiles=[];
+  if(!winner){headline='Nobody won the duel. Everything stays put.'}
+  else{const loser=other(winner);headline=`${NAME[winner]} wins the duel!`;
+   if(isMap(R)){const t=pick(stealable(R,loser));if(t){t.owner=winner;tiles.push(t.id);prize=`${NAME[winner]} takes ${TERRAIN_NAME[t.terrain]} from ${NAME[loser]}.`}else prize=`${NAME[loser]} had nothing to take.`}
+   else{const n=Math.min(3,Math.max(0,R.scores[loser]));R.scores[loser]-=n;R.scores[winner]+=n;prize=`${NAME[winner]} takes ${n} point${n===1?'':'s'} from ${NAME[loser]}.`}}
+  R.last={rid:r.id,lightning:{log:lt.log,score:lt.score,winner,prize,duel:true},event:{k:'duel',tiles},headline,cat:r.cat,tier:r.tier,kind:'race',q:{text:'',a:'',kind:'lightning'},res:{},claim:winner,next:R.turn,skipped:[],active:R.turn};
+  R.phase='reveal';R.round=null;await setRoom(R);cleanupAns(old,null);return}
  if(R.mode==='coop'){const add=lt.score.team;R.wood+=add;headline=add?`Lightning round: ${add} of 3. +${add} log${add>1?'s':''} for the fire!`:'Lightning round: 0 of 3. No logs this time.'}
  else{const b=lt.score.bruce,m=lt.score.meredith;winner=b>m?'bruce':m>b?'meredith':null;
   if(winner){headline=`${NAME[winner]} wins the lightning round ${Math.max(b,m)}–${Math.min(b,m)}!`;
@@ -552,12 +642,15 @@ async function fillHome(){
 }
 function showHowTo(){const o=$('#overlay');o.hidden=false;OVKEY='howto';o.innerHTML=`<div class="qcard flip howto" style="--c:var(--ember)"><button class="icon-btn close-x" id="hx" aria-label="Close">✕</button><h2 style="margin-bottom:12px">How to play</h2><ol>
  <li><b>Start a game</b> and send the 4-letter code. Both of you open this page and join with it.</li>
- <li><b>Boards.</b> <b>Territory</b>: claim any glowing tile on the map. <b>Frontier</b> (versus): you each start at a cabin in opposite corners and can only play tiles that touch your land (sides, not corners). You can also raid your opponent's border tiles with a harder question. <b>Fireside</b>: no map, just gifts on the mantel.</li>
+ <li><b>Boards.</b> <b>Territory</b> (6×6): claim any open tile. <b>Frontier</b> (7×7, versus): your cabins start in random spots far apart, and you can only play tiles that touch your land (sides, not corners). <b>Fireside</b>: no map, just gifts on the mantel. Every map is a new random landscape.</li>
+ <li><b>Raids</b> (versus maps): an opponent's tile that touches yours glows red. Raid it with a question one step harder. Miss, and they can defend it and fortify it for good.</li>
  <li><b>Each tile</b> shows its category and difficulty dots: 1 Easy to 4 Expert. Harder means more points.</li>
  <li><b>Trivia</b> (Knowledge, Music, Theatre, Science, History): you answer first. Miss, and the other player can steal. <b>Tunes and Word Play</b> are races: fastest right answer wins. <b>Guess Each Other</b>: they answer about themselves, you guess what they picked.</li>
  <li><b>Double Down</b> (3 each, versus): double a tile before you play it. Win it for double points; miss and your opponent gets it.</li>
  <li><b>Lightning round</b> every 8 turns: three quick multiple-choice questions for both of you. The winner gets a sabotage card.</li>
- <li><b>Final Frost</b>: in the last 4 turns (or the last 4 open tiles), every claim counts double.</li>
+ <li><b>Random events</b> every few turns: gold rushes, whiteouts, tremors, wolf packs, supply drops and duels where the winner takes one of the loser's tiles.</li>
+ <li><b>The end</b>: a banner counts down the last 5 turns. In the last 4, <b>Final Frost</b> makes every claim count double. Once every tile is taken, 4 more turns are left for raids.</li>
+ <li><b>On a phone</b>: pinch or use the + and − buttons to zoom the map, and drag to move around.</li>
  <li><b>Lanterns</b> and plaid gifts hide a bonus or a trap. Sabotage cards are played at the start of your turn and wait until they can bite: Fogged Window waits for a question with choices, Blizzard for a trivia tile below Expert.</li>
  <li><b>Co-op</b>: you both answer every question. Right answers add logs; misses and the storm burn them.</li>
  <li>Easy and Medium are usually multiple choice; Hard and Expert you type. Small typos are fine.</li></ol></div>`;$('#hx').onclick=closeOverlay;}
@@ -569,8 +662,8 @@ async function openSetup(){
  el.innerHTML=`<div class="setup">
   <div><div class="label">New game</div><h1 style="font-size:40px">Set the table</h1></div>
   <div class="panel stack"><h3>Board</h3><div class="choice-grid three">
-   ${ch('board','territory','Territory','Claim any tile on a 25-tile 3D map. Most points of land wins. About 45–60 minutes.')}
-   ${ch('board','frontier','Frontier','Versus. Start at your cabin and grow into tiles that touch your land. Raid each other\'s borders. 36 turns, about 45 minutes.')}
+   ${ch('board','territory','Territory','Claim tiles on a random 6×6 map and raid your opponent\'s edges. Most points of land wins. About an hour.')}
+   ${ch('board','frontier','Frontier','Versus. Your cabins start in random spots on a 7×7 map. Grow into tiles that touch your land and raid each other\'s borders. About an hour.')}
    ${ch('board','fireside','Fireside','No map. Open a gift from the mantel each turn. 16 rounds on the chalk slate. About 30–40 minutes.')}
   </div></div>
   <div class="panel stack"><h3>How you play</h3><div class="choice-grid">
@@ -620,8 +713,10 @@ let lastPhaseKey=null;
 function onRoom(){
  const R=ROOM;const pk=R.phase+'|'+(R.last&&R.last.rid)+'|'+R.turn;
  if(pk!==lastPhaseKey){
-  if(R.phase==='reveal'&&R.last&&lastPhaseKey!==null){const me=PRACTICE()?null:ME;const won=R.mode==='coop'?!!R.last.claim:(me?R.last.claim===me:!!R.last.claim);sfx(R.last.claim?(won?'claim':'bad'):'bad')}
+  if(R.phase==='reveal'&&R.last&&R.last.event&&!R.last.lightning&&lastPhaseKey!==null)sfx('turn');
+  else if(R.phase==='reveal'&&R.last&&lastPhaseKey!==null){const me=PRACTICE()?null:ME;const won=R.mode==='coop'?!!R.last.claim:(me?R.last.claim===me:!!R.last.claim);sfx(R.last.claim?(won?'claim':'bad'):'bad')}
   if(R.phase==='pick'&&!PRACTICE()&&R.turn===ME&&lastPhaseKey!==null)sfx('turn');
+  if(R.phase==='pick'&&lastPhaseKey!==null){const e=endNote(R),n=turnsLeft(R);if(e&&onRoom.warned!==R.code+n){onRoom.warned=R.code+n;toast(e.text+(e.sub?'. '+e.sub+'.':''),3600)}else if(n===10&&onRoom.warned!==R.code+n){onRoom.warned=R.code+n;toast('10 turns left in the game.')}}
   lastPhaseKey=pk;
  }
  render();maybeResolve();
@@ -637,12 +732,14 @@ function renderHud(){
   const fx=R.effects[s];const sk=+fx.skip||0;const warn=R.mode==='versus'?[sk&&(sk>1?`snowed in ×${sk}`:'snowed in'),fx.blizzard&&'blizzard',fx.fuse&&'short fuse',fx.fog&&'fogged'].filter(Boolean):[];
   return `<div class="plate ${s} ${right?'right':''} ${live&&activeSeat===s?'active':''}">${dot(s)}<div class="meta"><div class="row" style="gap:8px;${right?'justify-content:flex-end':''}"><span class="name">${NAME[s]}${s===ME&&!PRACTICE()?' (you)':''}</span><span class="turnpill">${live&&activeSeat===s?'Turn':'Waiting'}</span></div><div class="sub">${bits.join(' · ')}${ddb}${warn.length?` · <span style="color:#ffd08a">${warn.join(', ')}</span>`:''}</div></div>${R.mode==='versus'?`<div class="score num">${score(R,s)}</div>`:''}</div>`};
  let center;
- if(R.mode==='coop'){const w=Math.max(0,R.wood);center=`<div class="center-hud"><span class="label">Firewood</span><div class="wood" aria-label="${w} logs">${Array.from({length:Math.max(12,w)},(_,i)=>`<i class="${i<w?'':'out'}"></i>`).join('')}</div><span class="muted" style="font-size:13px">${R.board==='territory'?`${R.slots.filter(t=>t.owner).length}/25 claimed · turn ${R.turnNo+1}/${R.maxTurns}`:`Round ${Math.min(R.turnNo+1,R.maxTurns)} of ${R.maxTurns}`}</span></div>`}
- else{const fr=live&&frostOn(R);const ft=finalTurn(R);const big=R.board==='territory'?`${R.slots.filter(t=>!t.owner).length} tiles open`:R.board==='frontier'?`Turn ${Math.min(R.turnNo+1,ft)} of ${ft}`:`Round ${Math.min(R.turnNo+1,R.maxTurns)} of ${R.maxTurns}`;
-  center=`<div class="center-hud${fr?' frost':''}"><span class="label">${fr?'Final Frost · claims count double':`${BOARD_NAME[R.board]} · Versus`}</span><span class="big num">${big}</span><span class="muted" style="font-size:13px">${R.board==='frontier'&&R.endsAt!=null?'Every tile is taken. Last turns!':`Code ${esc(R.code)}`}</span></div>`}
+ if(R.mode==='coop'){const w=Math.max(0,R.wood);center=`<div class="center-hud"><span class="label">Firewood</span><div class="wood" aria-label="${w} logs">${Array.from({length:Math.max(12,w)},(_,i)=>`<i class="${i<w?'':'out'}"></i>`).join('')}</div><span class="muted" style="font-size:13px">${R.board==='territory'?`${R.slots.filter(t=>t.owner).length}/${R.slots.length} claimed · turn ${R.turnNo+1}/${R.maxTurns}`:`Round ${Math.min(R.turnNo+1,R.maxTurns)} of ${R.maxTurns}`}</span></div>`}
+ else{const fr=live&&frostOn(R);const ft=finalTurn(R);const big=isMap(R)?`Turn ${Math.min(R.turnNo+1,ft)} of ${ft}`:`Round ${Math.min(R.turnNo+1,R.maxTurns)} of ${R.maxTurns}`;
+  center=`<div class="center-hud${fr?' frost':''}"><span class="label">${fr?'Final Frost · claims count double':`${BOARD_NAME[R.board]} · Versus`}</span><span class="big num">${big}</span><span class="muted" style="font-size:13px">${isMap(R)&&R.endsAt!=null?'Every tile is taken. Last turns!':R.board==='territory'?`${R.slots.filter(t=>!t.owner).length} tiles open`:`Code ${esc(R.code)}`}</span></div>`}
  el.innerHTML=plate('bruce')+center+plate('meredith',true);
 }
 function canPick(){const R=ROOM;return R.phase==='pick'&&(PRACTICE()||R.turn===ME)}
+function endNote(R){if(!R||!['pick','round','reveal'].includes(R.phase))return null;const n=turnsLeft(R);if(n>5||n<1)return null;const co=R.mode==='coop';
+ return {n,text:n===1?(co?'Last turn before dawn!':'Last turn!'):co?`${n} turns until dawn`:`Game ends in ${n} turns`,sub:R.mode==='versus'&&frostOn(R)?'Final Frost: claims count double':''}}
 function renderStage(){
  const R=ROOM;const st=$('#stage');
  if(R.phase==='lobby'){BUILT=null;return renderLobby(st)}
@@ -650,6 +747,10 @@ function renderStage(){
   const key=R.code+R.season+R.board;if(BUILT!==key){buildBoard(st);BUILT=key}
   updateBoard();
  }else{BUILT=null;renderFireside(st)}
+ const e=endNote(R);let bar=$('#endbar',st);
+ if(!e){bar&&bar.remove();return}
+ if(!bar){bar=document.createElement('div');bar.id='endbar';st.appendChild(bar)}
+ bar.className='endbar'+(e.n===1?' last':'');bar.innerHTML=`<b>${esc(e.text)}</b>${e.sub?`<span>${esc(e.sub)}</span>`:''}`;
 }
 function legendHTML(){return `<div class="legend" aria-label="Legend">${Object.keys(CATS).map(c=>`<span class="lg">${icon(c)}${CATS[c].short}</span>`).join('')}<span class="lg" style="padding-left:9px">${pips(2)} difficulty</span></div>`}
 const TREE_SVG=`<svg viewBox="0 0 26 42"><rect x="11.5" y="33" width="3" height="9" fill="var(--trunk)"/><path d="M13 0 25 18H18L24 28H16L22 36H4L10 28H2L8 18H1Z" fill="var(--tree1)"/><path d="M13 0 25 18H18L24 28H16L22 36H13Z" fill="var(--tree2)" opacity=".55"/><path d="M13 0 18 8 15 7 13 9 11 7 8 8Z" fill="var(--snowcap)"/></svg>`;
@@ -659,28 +760,57 @@ const SHIELD_SVG='<svg viewBox="0 0 20 24"><path d="M10 1 19 5v7c0 5.5-4 9.5-9 1
 function badgeHTML(t){
  if(t.base)return `<div class="bb flag base" style="left:calc(66% - var(--s)*.25);top:calc(46% - var(--s)*.85);--fc:var(--${t.base})"><span class="pole"></span><span class="cloth">${NAME[t.base][0]}</span></div>`;
  if(t.owner)return `<div class="bb flag" style="left:calc(50% - var(--s)*.25);top:calc(50% - var(--s)*.85);--fc:var(--${t.owner})"><span class="pole"></span><span class="cloth">${t.owner==='team'?'★':NAME[t.owner][0]}</span>${t.fort?`<span class="fortmark" title="Fortified">${SHIELD_SVG}</span>`:''}${t.dbl?'<span class="x2">×2</span>':''}</div>`;
- return `<div class="bb badge" style="left:calc(50% - var(--s)*.25);top:calc(50% - var(--s)*.66);--c:${CATS[t.cat].c};--d:${(t.x*3+t.y*7)%10*.3}s"><div class="float"><div class="disc">${ICON[t.cat]}</div>${pips(t.tier)}</div>${t.mystery&&!t.revealed?'<span class="lantern">?</span>':''}</div>`;
+ return `<div class="bb badge${t.gold?' gold':''}" style="left:calc(50% - var(--s)*.25);top:calc(50% - var(--s)*.66);--c:${CATS[t.cat].c};--d:${(t.x*3+t.y*7)%10*.3}s"><div class="float"><div class="disc">${ICON[t.cat]}</div>${pips(t.tier)}</div>${t.mystery&&!t.revealed?'<span class="lantern">?</span>':''}${t.gold?'<span class="goldtag">×2</span>':''}</div>`;
+}
+/* pinch to zoom, drag to move, plus +/− buttons. Zoom changes the tile size, so text stays sharp. */
+let PZ={z:1,x:0,y:0},PZ_MOVED=false;
+function applyPZ(){const sc=$('.scene'),w=$('#pz');if(!sc||!w)return;const st=$('#stage').getBoundingClientRect();
+ const mx=st.width*(PZ.z-1)*.6,my=st.height*(PZ.z-1)*.6;PZ.x=Math.max(-mx,Math.min(mx,PZ.x));PZ.y=Math.max(-my,Math.min(my,PZ.y));
+ sc.style.setProperty('--z',PZ.z.toFixed(3));w.style.transform=`translate(${PZ.x.toFixed(1)}px,${PZ.y.toFixed(1)}px)`;
+ const zo=$('#zOut'),zf=$('#zFit');if(zo)zo.disabled=PZ.z<=1.001;if(zf)zf.disabled=PZ.z<=1.001&&!PZ.x&&!PZ.y}
+function zoomAt(z,mx,my){z=Math.max(1,Math.min(3,z));const k=z/PZ.z;PZ.x=mx-(mx-PZ.x)*k;PZ.y=my-(my-PZ.y)*k;PZ.z=z;applyPZ()}
+function wirePZ(st){
+ const sc=$('.scene',st);const pts=new Map();let last=null;
+ const center=()=>{const r=st.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]};
+ const snap=()=>{const v=[...pts.values()];if(v.length>=2){const [a,b]=v;return {d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2}}return v.length?{d:0,x:v[0].x,y:v[0].y}:null};
+ sc.addEventListener('pointerdown',e=>{if(e.button>0)return;pts.set(e.pointerId,{x:e.clientX,y:e.clientY,x0:e.clientX,y0:e.clientY});if(pts.size===1)PZ_MOVED=false;last=snap()});
+ const move=e=>{const p=pts.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;
+  if(Math.hypot(p.x-p.x0,p.y-p.y0)>8)PZ_MOVED=true;const now=snap();if(!last||!now)return;
+  if(pts.size>=2&&last.d>0){const [cx,cy]=center();zoomAt(PZ.z*now.d/last.d,now.x-cx,now.y-cy)}
+  if(PZ.z>1.001||pts.size>=2){PZ.x+=now.x-last.x;PZ.y+=now.y-last.y;applyPZ()}
+  last=now};
+ const up=e=>{pts.delete(e.pointerId);last=snap()};
+ if(wirePZ.off)wirePZ.off();addEventListener('pointermove',move);addEventListener('pointerup',up);addEventListener('pointercancel',up);
+ wirePZ.off=()=>{removeEventListener('pointermove',move);removeEventListener('pointerup',up);removeEventListener('pointercancel',up)};
+ sc.addEventListener('wheel',e=>{e.preventDefault();const [cx,cy]=center();zoomAt(PZ.z*(e.deltaY<0?1.15:1/1.15),e.clientX-cx,e.clientY-cy)},{passive:false});
+ $('#zIn',st).onclick=()=>zoomAt(PZ.z*1.4,0,0);$('#zOut',st).onclick=()=>zoomAt(PZ.z/1.4,0,0);$('#zFit',st).onclick=()=>{PZ={z:1,x:0,y:0};applyPZ()};
 }
 function buildBoard(st){
- const R=ROOM;const N=R.n||5;const tvar={meadow:'meadow',pines:'pines',lake:'lake',ridge:'ridge',peak:'ridge'};
- st.innerHTML=legendHTML()+`<div class="scene" data-season="${R.season}" data-n="${N}"><div class="board" id="board" style="width:calc(var(--s)*${N});height:calc(var(--s)*${N})">${R.slots.map(t=>{const v=tvar[t.terrain];
+ const R=ROOM;const N=R.n||5;const tvar={meadow:'meadow',pines:'pines',lake:'lake',ridge:'ridge',peak:'ridge'};PZ={z:1,x:0,y:0};
+ const sz=`--s:calc(clamp(20px, min(${(63/N).toFixed(2)}cqw, ${(95/N).toFixed(2)}cqh), ${Math.round(600/N)}px) * var(--z,1))`;
+ st.innerHTML=legendHTML()+`<div class="scene" data-season="${R.season}" data-n="${N}" style="${sz}"><div class="pz" id="pz"><div class="board" id="board" style="width:calc(var(--s)*${N});height:calc(var(--s)*${N})">${R.slots.map(t=>{const v=tvar[t.terrain];
   const deco=t.deco.map(({k,x:px,y:py,s:sc})=>k==='tree'?`<div class="bb tree" style="left:calc(${px*100}% - var(--s)*${.13*sc});top:calc(${py*100}% - var(--s)*${.42*sc});width:calc(var(--s)*${.26*sc});height:calc(var(--s)*${.42*sc})">${TREE_SVG}</div>`:`<div class="bb rock" style="left:calc(${px*100}% - var(--s)*.15);top:calc(${py*100}% - var(--s)*.2)">${ROCK_SVG}</div>`).join('');
   const cabin=t.cabin?`<div class="bb cabin-deco" style="left:calc(30% - var(--s)*.27);top:calc(26% - var(--s)*.5)">${CABIN_SVG}</div>`:'';
-  const label=t.base?`${NAME[t.base]}'s cabin`:`${CATS[t.cat].name}, ${TIER[t.tier].n}`;
-  return `<div class="tile ${t.terrain} enter" data-id="${t.id}" role="button" tabindex="-1" aria-label="${label}" style="left:calc(var(--s)*${t.x});top:calc(var(--s)*${t.y});--h:calc(var(--s)*${(t.h/96).toFixed(3)});--top:var(--${v});--side:var(--${v}-s);--d:${(t.x+t.y)*70}ms"><div class="fe"></div><div class="fs"></div><div class="top"><i class="mark" style="--c:${t.cat?CATS[t.cat].c:'#ffe2b8'}"></i></div>${deco}${cabin}<div class="slotbb" data-owner="">${badgeHTML(t)}</div></div>`}).join('')}</div></div>`;
- $('#board').onclick=e=>{const tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can'))return;SEL=tile.dataset.id;updateBoard();renderDock()};
+  return `<div class="tile ${t.terrain} enter" data-id="${t.id}" role="button" tabindex="-1" style="left:calc(var(--s)*${t.x});top:calc(var(--s)*${t.y});--h:calc(var(--s)*${(t.h/96).toFixed(3)});--top:var(--${v});--side:var(--${v}-s);--d:${(t.x+t.y)*60}ms"><div class="fe"></div><div class="fs"></div><div class="top"><i class="mark"></i></div>${deco}${cabin}<div class="slotbb" data-owner="">${badgeHTML(t)}</div></div>`}).join('')}</div></div></div>
+  <div class="zoomctl" aria-label="Map zoom"><button class="icon-btn" id="zIn" aria-label="Zoom in">+</button><button class="icon-btn" id="zOut" aria-label="Zoom out" disabled>−</button><button class="icon-btn" id="zFit" aria-label="Fit the whole map" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div>`;
+ const pickTile=e=>{if(PZ_MOVED)return;const tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can'))return;SEL=tile.dataset.id;updateBoard();renderDock()};
+ $('#board').onclick=pickTile;
  $('#board').onkeydown=e=>{if(e.key!=='Enter'&&e.key!==' ')return;const tile=e.target.closest('.tile');if(!tile||!tile.classList.contains('can'))return;e.preventDefault();SEL=tile.dataset.id;updateBoard();renderDock();$('#dPlay')&&$('#dPlay').focus()};
+ wirePZ(st);applyPZ();
  setTimeout(()=>$$('.tile.enter').forEach(t=>t.classList.remove('enter')),1800);
 }
 function updateBoard(){
  const R=ROOM;const can=canPick();const L=can?legalTiles(R,R.turn):null;
  if(SEL&&L&&!L.expand.has(SEL)&&!L.raid.has(SEL))SEL=null;
+ const flash=new Set(R.phase==='reveal'&&R.last&&R.last.event?R.last.event.tiles||[]:[]);
  for(const t of R.slots){const el=$(`.tile[data-id="${t.id}"]`);if(!el)continue;
   const ex=can&&L.expand.has(t.id),rd=can&&L.raid.has(t.id),ok=ex||rd;
-  el.classList.toggle('can',ok);el.classList.toggle('raid',rd);el.classList.toggle('sel',SEL===t.id);el.classList.toggle('base',!!t.base);
+  el.classList.toggle('can',ok);el.classList.toggle('raid',rd);el.classList.toggle('sel',SEL===t.id);el.classList.toggle('base',!!t.base);el.classList.toggle('flash',flash.has(t.id));
   P.concat('team').forEach(s=>el.classList.toggle('own-'+s,t.owner===s));
   el.classList.toggle('dim',R.phase==='pick'&&can&&!ok);
-  const holder=el.querySelector('.slotbb');const sig=(t.owner||'')+'|'+(t.revealed?1:0)+'|'+(t.fort?1:0)+'|'+(t.dbl?1:0);
+  el.setAttribute('aria-label',t.base?`${NAME[t.base]}'s cabin`:`${CATS[t.cat].name}, ${TIER[t.tier].n}${t.owner?`, ${t.owner==='team'?'claimed':NAME[t.owner]+"'s"}`:''}${t.gold?', gold':''}${t.mystery&&!t.revealed?', mystery':''}`);
+  el.querySelector('.mark').style.setProperty('--c',t.cat?CATS[t.cat].c:'#ffe2b8');
+  const holder=el.querySelector('.slotbb');const sig=[t.owner||'',t.revealed?1:0,t.mystery?1:0,t.fort?1:0,t.dbl?1:0,t.gold?1:0,t.tier,t.cat].join('|');
   if(holder.dataset.owner!==sig){const first=holder.dataset.owner==='';const prevOwner=holder.dataset.owner.split('|')[0];holder.dataset.owner=sig;holder.innerHTML=badgeHTML(t);if(!first&&t.owner&&t.owner!==prevOwner){el.classList.add('claimed-now');setTimeout(()=>el.classList.remove('claimed-now'),1000)}}
   el.setAttribute('tabindex',ok?'0':'-1');
  }
@@ -689,7 +819,7 @@ function renderFireside(st){
  const R=ROOM;const can=canPick();const w=Math.max(0,R.wood);const fire=R.mode==='coop'?Math.max(.25,Math.min(1.25,w/8)):1;
  const slate=R.mode==='versus'?`<div class="slate"><div class="t">Chalk slate · round ${Math.min(R.turnNo+1,R.maxTurns)} of ${R.maxTurns}</div>${P.map(s=>`<div class="r"><span>${NAME[s]}</span><b class="num">${R.scores[s]}</b></div><div class="tally">${'/'.repeat(Math.min(30,R.scores[s]))}</div>`).join('')}</div>`
   :`<div class="slate"><div class="t">Survive the storm</div><div class="r"><span>Logs</span><b class="num">${w}</b></div><div class="r"><span>Round</span><b class="num">${Math.min(R.turnNo+1,R.maxTurns)}/${R.maxTurns}</b></div></div>`;
- const gifts=R.slots.map((g,i)=>{const fresh=!SEEN.has(g.id);SEEN.add(g.id);return `<button class="gift ${g.mystery?'mys':''} ${can?'can':''} ${SEL===g.id?'sel':''} ${fresh?'enter':''}" data-id="${g.id}" ${can?'':'disabled'} style="--gc:${CATS[g.cat].c};--d:${i*90}ms" aria-label="${CATS[g.cat].name}, ${TIER[g.tier].n}${g.mystery?', mystery gift':''}"><div class="box"><div class="rt"></div><div class="f"></div><div class="tp"></div></div><span class="tag">${icon(g.cat)}${pips(g.tier)}${g.mystery?' <b style="color:#ffd08a">?</b>':''}</span></button>`}).join('');
+ const gifts=R.slots.map((g,i)=>{const fresh=!SEEN.has(g.id);SEEN.add(g.id);return `<button class="gift ${g.mystery?'mys':''} ${g.gold?'goldgift':''} ${can?'can':''} ${SEL===g.id?'sel':''} ${fresh?'enter':''}" data-id="${g.id}" ${can?'':'disabled'} style="--gc:${CATS[g.cat].c};--d:${i*90}ms" aria-label="${CATS[g.cat].name}, ${TIER[g.tier].n}${g.mystery?', mystery gift':''}"><div class="box"><div class="rt"></div><div class="f"></div><div class="tp"></div></div><span class="tag">${icon(g.cat)}${pips(g.tier)}${g.mystery?' <b style="color:#ffd08a">?</b>':''}${g.gold?' <b class="goldtxt">×2</b>':''}</span></button>`}).join('');
  st.innerHTML=`<div class="fireside">${slate}<div class="hearth"><div class="mantel">${gifts}</div><div class="shelf"></div><div class="firebox"><div class="logs"></div><div style="position:absolute;inset:0;transform-origin:50% 100%;transform:scale(${fire})"><div class="flame a"></div><div class="flame b"></div><div class="flame c"></div></div></div><div class="hearth-glow" style="opacity:${fire}"></div></div><div class="fs-window" aria-hidden="true">${Array.from({length:22},(_,i)=>`<i style="left:${(i*37)%100}%;animation-duration:${4+(i%5)}s;animation-delay:-${i*.7}s"></i>`).join('')}</div></div>`;
  $$('.gift.can',st).forEach(b=>b.onclick=()=>{SEL=b.dataset.id;renderStage();renderDock()});
 }
@@ -713,7 +843,7 @@ function renderDock(){
   if(mine){
    const t=SEL&&R.slots.find(s=>s.id===SEL);const opp=other(R.turn);
    if(BUSY){say='Getting the question ready…';hint='One moment.'}
-   else if(t){const raid=R.board==='frontier'&&t.owner===opp;const tier=Math.min(4,t.tier+(raid?1:0));const kind=CATS[t.cat].kind;const E=R.effects[R.turn];
+   else if(t){const raid=isMap(R)&&R.mode==='versus'&&t.owner===opp;const tier=Math.min(4,t.tier+(raid?1:0));const kind=CATS[t.cat].kind;const E=R.effects[R.turn];
     const fr=R.mode==='versus'&&frostOn(R)&&!raid;const canDD=R.mode==='versus'&&!raid&&!fr&&!!(R.dd&&R.dd[R.turn]>0);if(!canDD)DD=false;
     const pts=t.tier*((DD||fr)?2:1);
     say=`${raid?'Raid · ':''}${CATS[t.cat].name} · ${TIER[tier].n}`;
@@ -726,7 +856,7 @@ function renderDock(){
     if(canDD)ddHTML=`<button class="ddchip" id="dDD" aria-pressed="${DD}"><i>×2</i>${DD?'Doubled down':'Double Down'} <span>${R.dd[R.turn]} left</span></button>`;
     acts=`<button class="btn ghost" id="dCancel">Choose another</button><button class="btn big" id="dPlay">${raid?'Raid this tile':isMap(R)?'Play this tile':'Open this gift'}</button>`}
    else{say=`${PRACTICE()?NAME[R.turn]+"'s":'Your'} turn: ${isMap(R)?'pick a glowing tile':'choose a gift'}`;
-    hint=R.board==='frontier'?(legalTiles(R,R.turn).boxed?'You\'re boxed in, so any open tile is fair game.':`Glowing tiles touch your land. Red-edged ones belong to ${NAME[opp]}: raid them with a harder question.`):R.board==='territory'?'The icon shows the category. More dots means harder and more points.':'More dots means harder and more points. Plaid paper hides a surprise.';}
+    hint=R.board==='frontier'?(legalTiles(R,R.turn).boxed?'You\'re boxed in, so any open tile is fair game.':`Glowing tiles touch your land. Red-edged ones belong to ${NAME[opp]}: raid them with a harder question.`):R.board==='territory'?`Any glowing tile is open. Red-edged tiles are ${NAME[opp]}'s and touch your land: raid them with a harder question.`:'More dots means harder and more points. Plaid paper hides a surprise.';}
   }else{say=`${NAME[R.turn]} is choosing…`;const fx=R.effects[ME];hint=R.mode==='versus'&&fx&&(fx.blizzard||fx.fuse||fx.fog||+fx.skip)?`Heads up: ${[+fx.skip&&'you\'re snowed in next turn',fx.blizzard&&'Blizzard is waiting for you',fx.fuse&&'Short Fuse is waiting for you',fx.fog&&'Fogged Window is waiting for you'].filter(Boolean).join('; ')}.`:isMap(R)?'You can look around the map while you wait.':'Waiting for their pick.'}
  }else if(R.phase==='round'){say=R.round&&R.round.lightning?'Lightning round':'Question in play';hint='Answer in the card.';acts=`<button class="btn ghost small" id="dShow">Show question</button>`}
  else if(R.phase==='reveal'){const L=R.last;say=L?L.headline:'';const nextMine=PRACTICE()||R.turn===ME;const sk=L?(Array.isArray(L.skipped)?L.skipped:L.skipped?[L.skipped]:[]):[];hint=sk.length?`${sk.map(x=>NAME[x]).join(' and ')} ${sk.length>1?'were':'is'} snowed in. ${NAME[R.turn]} is up.`:`Next up: ${NAME[R.turn]}.`;acts=nextMine?`<button class="btn big" id="dNext">${PRACTICE()?`Start ${NAME[R.turn]}'s turn`:'Start my turn'}</button>`:`<span class="muted">Waiting for ${NAME[R.turn]}…</span>`}
@@ -770,7 +900,7 @@ function renderOverlay(force){
 }
 function qHead(R,q,r){const t=R.slots.find(x=>x.id===r.slotId);const two=R.mode==='versus'&&!r.raid&&(r.dd||r.frost);const pts=t?t.tier*(two?2:1):0;
  const tags=[r.fx&&r.fx.blizzard&&'Blizzard!',r.raid&&'Raid',r.dd&&'Double Down',r.frost&&!r.raid&&R.mode==='versus'&&'Final Frost'].filter(Boolean);
- return `${r.lightning?`<div class="lbanner">${ICON.bolt}<b>Lightning round</b><span>Question ${r.lightning.i} of ${r.lightning.n} · fastest right answer scores</span></div>`:''}<div class="qhead">${icon(r.cat,34)}<div><div class="cat">${CATS[r.cat].name}</div><div class="row" style="gap:8px;font-size:13px">${pips(q.tier)}<span class="muted">${TIER[q.tier].n}${t?` · ${pts} pt${pts>1?'s':''}`:''}${tags.length?' · <b class="tagx">'+tags.join(' · ')+'</b>':''}</span></div></div>${srcChip(q)}<div class="timer" id="tmr" hidden><svg viewBox="0 0 54 54"><circle class="bg" cx="27" cy="27" r="23"/><circle class="fg" cx="27" cy="27" r="23" stroke-dasharray="144.5" stroke-dashoffset="0"/></svg><b>--</b></div></div>`}
+ return `${r.lightning?(r.lightning.duel?`<div class="lbanner duel">${EV_ICON.duel}<b>Duel at dawn</b><span>Fastest right answer wins ${isMap(R)?'a tile':'3 points'} from the other</span></div>`:`<div class="lbanner">${ICON.bolt}<b>Lightning round</b><span>Question ${r.lightning.i} of ${r.lightning.n} · fastest right answer scores</span></div>`):''}<div class="qhead">${icon(r.cat,34)}<div><div class="cat">${CATS[r.cat].name}</div><div class="row" style="gap:8px;font-size:13px">${pips(q.tier)}<span class="muted">${TIER[q.tier].n}${t?` · ${pts} pt${pts>1?'s':''}`:''}${tags.length?' · <b class="tagx">'+tags.join(' · ')+'</b>':''}</span></div></div>${srcChip(q)}<div class="timer" id="tmr" hidden><svg viewBox="0 0 54 54"><circle class="bg" cx="27" cy="27" r="23"/><circle class="fg" cx="27" cy="27" r="23" stroke-dasharray="144.5" stroke-dashoffset="0"/></svg><b>--</b></div></div>`}
 function questionCard(R,s,role,doFlip){
  const r=R.round,q=r.q;const them=other(s);const act=r.active;
  if(PRACTICE()&&role!=='watch'&&!LOCAL.handed){return `<div class="qcard flip hand-over" style="--c:${CATS[r.cat].c}">${dot(s)}<h2>${NAME[s]}'s answer</h2><p class="muted">Hand the laptop to ${NAME[s]} so ${NAME[them]} can't peek.</p><button class="btn big" id="qHand">I'm ${NAME[s]}, show me</button></div>`}
@@ -823,6 +953,14 @@ function resLine(L,s){const x=L.res[s];if(!x)return'';const role=x.role==='truth
 function revealCard(R){
  const L=R.last;const showAns=L.q.kind!=='us';const nextMine=PRACTICE()||R.turn===ME;
  const foot=`<div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn ghost" id="rView">See the ${isMap(R)?'map':'mantel'}</button>${nextMine?`<button class="btn" id="rNext">${PRACTICE()?`Start ${NAME[R.turn]}'s turn`:'Start my turn'}</button>`:`<span class="muted">Next: ${NAME[R.turn]}</span>`}</div>`;
+ const leftNote=(()=>{const e=endNote(R);return e?`<div class="endnote">${esc(e.text)}</div>`:''})();
+ if(L.event&&!L.lightning){const e=L.event;
+  return `<div class="qcard flip eventcard ${e.good===false?'bad':''}"><div class="lbanner ev">${EV_ICON[e.k]||ICON.bolt}<b>${esc(e.title)}</b><span>Random event</span></div><div class="result"><p class="evtext">${esc(e.text)}</p>${leftNote}${foot}</div></div>`}
+ if(L.lightning&&L.lightning.duel){const lt=L.lightning,x=lt.log[0]||{};
+  return `<div class="qcard flip" style="--c:#ff8a6b"><div class="lbanner duel">${EV_ICON.duel}<b>Duel at dawn</b><span>Bruce ${lt.score.bruce} · Meredith ${lt.score.meredith}</span></div><div class="result"><div class="headline">${esc(L.headline)}</div>
+  <div class="answer-line"><span class="muted" style="font-size:13px">Answer</span><div style="font-weight:700;font-size:20px">${esc(x.a||'')}</div><div class="muted" style="font-size:14px">${esc(x.text||'')}</div></div>
+  <div class="pl-res">${P.map(s=>`<div class="pr">${dot(s)} <div class="v">${x.v&&x.v[s]?esc(x.v[s]):'<span class="muted">No answer</span>'} ${x.ok&&x.ok[s]?'<span class="ok">✓</span>':'<span class="no">✗</span>'}</div></div>`).join('')}</div>
+  ${lt.prize?`<div class="mys"><span class="lamp"></span><div><b>Spoils</b><br><span class="muted">${esc(lt.prize)}</span></div></div>`:''}${leftNote}${foot}</div></div>`}
  if(L.lightning){const lt=L.lightning;const co=R.mode==='coop';
   return `<div class="qcard flip" style="--c:#ffd46b"><div class="lbanner">${ICON.bolt}<b>Lightning round</b><span>${co?`${lt.score.team} of 3 together`:`Bruce ${lt.score.bruce} · Meredith ${lt.score.meredith}`}</span></div><div class="result"><div class="headline">${esc(L.headline)}</div>
   <div class="lt-log">${lt.log.map((x,i)=>`<div class="lt-row"><span class="n">${i+1}</span><div style="min-width:0"><div class="muted" style="font-size:14px">${esc(x.text)}</div><b>${esc(x.a)}</b></div><span>${x.win?(x.win==='team'?'<span class="ok">✓</span>':dot(x.win)):'<span class="muted">–</span>'}</span></div>`).join('')}</div>
@@ -839,6 +977,7 @@ function revealCard(R){
  ${L.mys?`<div class="mys ${L.mys.good?'':'bad'}"><span class="lamp"></span><div><b>${esc(L.mys.title)}</b><br><span class="muted">${esc(L.mys.text)}</span></div></div>`:''}
  ${notes.length?`<div class="muted" style="font-size:14px">${notes.map(esc).join(' ')}</div>`:''}
  ${turnLine?`<div class="muted">${esc(turnLine)}</div>`:''}
+ ${L.gold?'<div class="muted">Gold tile: double points.</div>':''}${leftNote}
  ${foot}</div></div>`;
 }
 function wireReveal(R,key){$('#rView').onclick=()=>{HIDE_REVEAL=key;closeOverlay()};const n=$('#rNext');if(n)n.onclick=()=>{n.disabled=true;startTurn()}}
@@ -854,7 +993,7 @@ function awards(R){const out=[];const st=R.stats||{};const pl=n=>n===1?'':'s';
  return out.slice(0,6)}
 function overCard(R){
  const res=R.result||{};let head,sub='';
- if(res.coop){head=res.win?'You survived the storm!':res.timeout?'Dawn came before the woods were claimed':'The fire went out';sub=res.win?`${res.wood} logs left${R.board==='territory'?` and all 25 tiles claimed`:''}.`:`You claimed ${res.claimed||0} tiles together. Try again?`}
+ if(res.coop){head=res.win?'You survived the storm!':res.timeout?'Dawn came before the woods were claimed':'The fire went out';sub=res.win?`${res.wood} logs left${R.board==='territory'?` and all ${R.slots.length} tiles claimed`:''}.`:`You claimed ${res.claimed||0} tiles together. Try again?`}
  else{head=res.winner==='tie'?"It's a tie!":`${NAME[res.winner]} wins!`;if(R.stakes)sub=res.winner==='tie'?`Stakes (“${R.stakes}”) are a wash. Rematch?`:`Stakes: ${R.stakes}. ${NAME[res.winner]} collects.`}
  return `<div class="qcard flip" style="--c:var(--${res.coop?'team':res.winner==='tie'?'ember':res.winner})"><div class="result" style="text-align:center;justify-items:center"><div class="label">Game over</div><div class="headline" style="font-size:40px">${esc(head)}</div>
  ${res.coop?'':`<div class="over-scores">${P.map(s=>`<div class="s">${dot(s)}<b class="num">${res.scores[s]}</b><span class="muted">${NAME[s]}</span></div>`).join('')}</div>`}
@@ -1001,6 +1140,6 @@ async function boot(){
  SETUP.ai=false;
  renderHome();
 }
-if(/[?&]cntest\b/.test(location.search))window.__cnTest={room:()=>ROOM,seen:()=>SEENQ.length,legal:(p)=>{const L=legalTiles(ROOM,p);return {expand:[...L.expand],raid:[...L.raid],boxed:L.boxed}},bank:()=>BANK_OBJS};
+if(/[?&]cntest\b/.test(location.search))window.__cnTest={room:()=>ROOM,set:async f=>{const R=clone(ROOM);f(R);await setRoom(R)},seen:()=>SEENQ.length,legal:(p)=>{const L=legalTiles(ROOM,p);return {expand:[...L.expand],raid:[...L.raid],boxed:L.boxed}},bank:()=>BANK_OBJS};
 boot();
 })();
