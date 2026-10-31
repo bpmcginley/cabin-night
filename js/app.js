@@ -107,7 +107,7 @@ let MUTED=store.get('cn.muted',false);
 /* ---------- small ui helpers ---------- */
 function toast(msg,ms=3200){const t=$('#toast');t.textContent=msg;t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('on'),ms)}
 function show(name){$$('main > section').forEach(s=>s.hidden=s.id!=='scr-'+name);if(name!=='game'){closeOverlay();}window.scrollTo(0,0);document.onkeydown=null;}
-function closeOverlay(){stopClip();const o=$('#overlay');o.hidden=true;o.innerHTML='';OVKEY=null;stopTimer();}
+function closeOverlay(){stopClip();const o=$('#overlay');o.hidden=true;o.innerHTML='';o.onclick=null;OVKEY=null;stopTimer();}
 function icon(cat,size){return `<span class="ic" style="--c:${CATS[cat].c};${size?`width:${size}px;height:${size}px`:''}">${ICON[cat]}</span>`}
 function pips(t){return `<span class="pips" aria-label="${TIER[t].n}">${[1,2,3,4].map(i=>`<i class="${i<=t?'on':''}"></i>`).join('')}</span>`}
 function dot(s,txt){return `<span class="dot ${s}">${esc(txt||NAME[s][0])}</span>`}
@@ -863,8 +863,8 @@ function renderDock(){
  else if(R.phase==='over'){say='Game over';acts=`<button class="btn" id="dOver">See results</button>`}
  const hand=R.mode==='versus'&&R.phase==='pick'&&mine?R.cards[R.turn]:[];
  el.innerHTML=`<div class="status"><div class="say">${esc(say)}</div><div class="hint">${esc(hint)}</div>${ddHTML}
-  ${hand.length?`<div class="hand" style="margin-top:8px">${hand.map((k,i)=>{const pend=cardPending(R,other(R.turn),k);return `<div class="scard"><b>${SAB[k].n}</b><span>${esc(SAB[k].d(NAME[other(R.turn)]))}</span><button class="btn small ghost" data-card="${i}" ${R.playedCard||pend||BUSY?'disabled':''}>${R.playedCard?'One card per turn':pend?'Already waiting':`Use on ${NAME[other(R.turn)]}`}</button></div>`}).join('')}</div>`:''}</div>
-  <div class="dock-actions">${R.stakes?`<span class="stakes" title="Stakes">${esc(R.stakes)}</span>`:''}${acts}<button class="btn ghost small" id="dHow">Rules</button><button class="btn ghost small" id="dHome">Leave</button></div>`;
+  </div>
+  <div class="dock-actions">${R.stakes?`<span class="stakes" title="Stakes">${esc(R.stakes)}</span>`:''}${hand.length?`<button class="btn ghost small cardsbtn" id="dCards">Sabotage cards <b>${hand.length}</b></button>`:''}${acts}<button class="btn ghost small" id="dHow">Rules</button><button class="btn ghost small" id="dHome">Leave</button></div>`;
  $('#dHome').onclick=goHome;$('#dHow').onclick=showHowTo;
  $('#dCancel')&&($('#dCancel').onclick=()=>{SEL=null;renderStage();renderDock()});
  $('#dDD')&&($('#dDD').onclick=()=>{DD=!DD;renderDock()});
@@ -872,8 +872,13 @@ function renderDock(){
  $('#dNext')&&($('#dNext').onclick=e=>{e.target.disabled=true;startTurn()});
  $('#dShow')&&($('#dShow').onclick=()=>{OVKEY=null;renderOverlay(true)});
  $('#dOver')&&($('#dOver').onclick=()=>{HIDE_REVEAL=null;OVKEY=null;renderOverlay(true)});
- $$('[data-card]').forEach(b=>b.onclick=()=>playCard(+b.dataset.card));
+ $('#dCards')&&($('#dCards').onclick=()=>showCards());
 }
+function showCards(){const R=ROOM;if(!R)return;const me=R.turn,opp=other(me);const hand=R.cards[me]||[];const o=$('#overlay');o.hidden=false;OVKEY='cards';
+ o.innerHTML=`<div class="qcard flip cardsbox" style="--c:var(--ember)"><button class="icon-btn close-x" id="cx" aria-label="Close">✕</button><h2 style="margin:0 0 4px">${PRACTICE()?NAME[me]+"'s":'Your'} sabotage cards</h2><p class="muted" style="margin:0 0 14px">Play one at the start of your turn. It hits ${NAME[opp]} on their next turn.</p>
+ <div class="hand">${hand.length?hand.map((k,i)=>{const pend=cardPending(R,opp,k);return `<div class="scard"><b>${SAB[k].n}</b><span>${esc(SAB[k].d(NAME[opp]))}</span><button class="btn small" data-card="${i}" ${R.playedCard||pend||BUSY||R.phase!=='pick'?'disabled':''}>${R.playedCard?'One card per turn':pend?'Already waiting':`Use on ${NAME[opp]}`}</button></div>`}).join(''):'<div class="empty">No cards right now.</div>'}</div></div>`;
+ $('#cx').onclick=closeOverlay;o.onclick=e=>{if(e.target===o)closeOverlay()};
+ $$('[data-card]',o).forEach(b=>b.onclick=async()=>{b.disabled=true;closeOverlay();await playCard(+b.dataset.card)});}
 function goHome(){leaveRoom();show('home');renderHome()}
 
 /* ---------- overlay: question / reveal / over ---------- */
@@ -896,7 +901,7 @@ function renderOverlay(force){
  }
  if(R.phase==='reveal'&&R.last){stopClip();const key='reveal|'+R.last.rid+'|'+R.turn;if(HIDE_REVEAL===key&&!force){return}if(key===OVKEY&&!force)return;OVKEY=key;stopTimer();o.hidden=false;o.innerHTML=revealCard(R);wireReveal(R,key);return}
  if(R.phase==='over'){const key='over|'+R.code+'|'+(R.next||'');if(HIDE_REVEAL===key&&!force)return;if(key===OVKEY&&!force)return;OVKEY=key;stopTimer();o.hidden=false;o.innerHTML=overCard(R);wireOver(R,key);return}
- if(OVKEY&&OVKEY!=='howto')closeOverlay();
+ if(OVKEY&&OVKEY!=='howto'&&!(OVKEY==='cards'&&R.phase==='pick'))closeOverlay();
 }
 function qHead(R,q,r){const t=R.slots.find(x=>x.id===r.slotId);const two=R.mode==='versus'&&!r.raid&&(r.dd||r.frost);const pts=t?t.tier*(two?2:1):0;
  const tags=[r.fx&&r.fx.blizzard&&'Blizzard!',r.raid&&'Raid',r.dd&&'Double Down',r.frost&&!r.raid&&R.mode==='versus'&&'Final Frost'].filter(Boolean);
